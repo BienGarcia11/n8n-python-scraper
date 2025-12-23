@@ -3,3 +3,4 @@ requests
 html2text
 pytest-playwright
 fastembed
+langchain-text-splitters
