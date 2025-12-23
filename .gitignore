@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Local Test/Config Files
+test_embedding_workflow.json
+python indexer/simple_embed.py
+test_fyi_clients.py
+restore_url_queue.sql

@@ -2,3 +2,4 @@ playwright
 requests
 html2text
 pytest-playwright
+fastembed
