@@ -11,6 +11,10 @@ on:
         description: 'n8n Webhook URL for callback'
         required: true
         type: string
+      metadata:
+        description: 'JSON metadata to pass through'
+        required: false
+        type: string
 
 jobs:
   embed:
@@ -44,4 +48,4 @@ jobs:
 
       - name: Run Embedder
         run: |
-          python embed.py --text "${{ inputs.text }}" --callback_url "${{ inputs.callback_url }}"
+          python embed.py --text "${{ inputs.text }}" --callback_url "${{ inputs.callback_url }}" --metadata '${{ inputs.metadata }}'

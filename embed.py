@@ -5,7 +5,7 @@ import json
 from fastembed import TextEmbedding
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-def process_document(text, chunk_size=500, chunk_overlap=50):
+def process_document(text, metadata=None, chunk_size=500, chunk_overlap=50):
     print("Loading model...")
     model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
     
@@ -19,17 +19,19 @@ def process_document(text, chunk_size=500, chunk_overlap=50):
     print(f"Created {len(chunks)} chunks.")
     
     print("Generating embeddings...")
-    # FastEmbed can embed a list of strings efficiently
     embeddings_generator = model.embed(chunks)
-    embeddings_list = list(embeddings_generator) # Convert generator to list of arrays
+    embeddings_list = list(embeddings_generator)
     
     results = []
     for i, chunk in enumerate(chunks):
-        results.append({
+        item = {
             "content": chunk,
             "embedding": embeddings_list[i].tolist(),
             "chunk_index": i
-        })
+        }
+        if metadata:
+            item["metadata"] = metadata
+        results.append(item)
         
     return results
 
@@ -37,13 +39,18 @@ def main():
     parser = argparse.ArgumentParser(description="Split and embed text, returning JSON to n8n.")
     parser.add_argument("--text", required=True, help="The full document text to embed.")
     parser.add_argument("--callback_url", required=True, help="The n8n webhook URL to send the result to.")
+    parser.add_argument("--metadata", required=False, help="JSON string of metadata to pass through.")
     parser.add_argument("--chunk_size", type=int, default=500, help="Chars per chunk")
     parser.add_argument("--chunk_overlap", type=int, default=50, help="Overlap chars")
     
     args = parser.parse_args()
     
     try:
-        results = process_document(args.text, args.chunk_size, args.chunk_overlap)
+        metadata = None
+        if args.metadata:
+            metadata = json.loads(args.metadata)
+
+        results = process_document(args.text, metadata, args.chunk_size, args.chunk_overlap)
         
         payload = {
             "results": results,
