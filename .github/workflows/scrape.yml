@@ -42,17 +42,6 @@ jobs:
       - name: Add venv to PATH
         run: echo "$GITHUB_WORKSPACE/venv/bin" >> $GITHUB_PATH
 
-      - name: Cache Playwright browsers
-        uses: actions/cache@v3
-        id: playwright-cache
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('requirements.txt') }}
-
-      - name: Install Playwright browsers
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: playwright install --with-deps chromium
-
       - name: Run Scraper
         run: |
           python scraper.py --url "${{ inputs.url }}" --callback_url "${{ inputs.callback_url }}"

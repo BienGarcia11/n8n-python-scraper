@@ -98,9 +98,10 @@ async def scrape_urls_async(urls, max_concurrent=5):
     semaphore = asyncio.Semaphore(max_concurrent)
     
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        # Use pre-installed Chrome on GitHub runners (no browser download needed)
+        browser = await p.chromium.launch(headless=True, channel="chrome")
         context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
         
         tasks = [scrape_single_url(context, url, semaphore) for url in urls]
