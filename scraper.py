@@ -1,92 +1,98 @@
-
-import sys
+import asyncio
 import argparse
 import requests
-import json
-from playwright.sync_api import sync_playwright
+from playwright.async_api import async_playwright
 import html2text
 
-def scrape_urls(urls):
-    results = []
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        # Use a generic user agent to avoid basic blocking
-        context = browser.new_context(
+
+async def scrape_single_url(context, url, semaphore):
+    """Scrape a single URL with concurrency control"""
+    async with semaphore:
+        url = url.strip()
+        if not url:
+            return None
+        
+        page = await context.new_page()
+        try:
+            print(f"Scraping: {url}")
+            await page.goto(url, timeout=30000, wait_until="networkidle")
+            html_content = await page.content()
+            title = await page.title()
+            
+            h = html2text.HTML2Text()
+            h.ignore_links = False
+            h.ignore_images = True
+            markdown_content = h.handle(html_content)
+            
+            return {
+                "url": url,
+                "title": title,
+                "content": markdown_content,
+                "status": "success"
+            }
+        except Exception as e:
+            print(f"Error: {url} - {e}")
+            return {
+                "url": url,
+                "title": None,
+                "content": None,
+                "status": "error",
+                "error": str(e)
+            }
+        finally:
+            await page.close()
+
+
+async def scrape_urls_async(urls, max_concurrent=5):
+    """Scrape multiple URLs concurrently"""
+    semaphore = asyncio.Semaphore(max_concurrent)
+    
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         )
         
-        for url in urls:
-            url = url.strip()
-            if not url:
-                continue
-                
-            page = context.new_page()
-            try:
-                print(f"Navigating to {url}...")
-                page.goto(url, timeout=30000, wait_until="networkidle")
-                
-                # Simple content extraction: get the procesed HTML
-                html_content = page.content()
-                
-                # Convert to Markdown for RAG-friendliness
-                h = html2text.HTML2Text()
-                h.ignore_links = False
-                h.ignore_images = True
-                markdown_content = h.handle(html_content)
-                
-                results.append({
-                    "url": url,
-                    "content": markdown_content,
-                    "status": "success"
-                })
-            except Exception as e:
-                print(f"Error scraping {url}: {e}")
-                results.append({
-                    "url": url,
-                    "content": None,
-                    "status": "error",
-                    "error": str(e)
-                })
-            finally:
-                page.close()
+        tasks = [scrape_single_url(context, url, semaphore) for url in urls]
+        results = await asyncio.gather(*tasks)
         
-        browser.close()
-    return results
+        await browser.close()
+    
+    return [r for r in results if r is not None]
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Scrape web pages using Playwright.")
-    parser.add_argument("--url", required=True, help="The URL(s) to scrape. Can be a single URL or comma-separated list.")
-    parser.add_argument("--callback_url", required=False, help="The n8n webhook URL to send data back to")
-    
+    parser = argparse.ArgumentParser(description="Async web scraper with Playwright")
+    parser.add_argument("--url", required=True, help="Comma-separated URLs to scrape")
+    parser.add_argument("--callback_url", required=False, help="n8n callback URL")
+    parser.add_argument("--concurrency", type=int, default=5, help="Max concurrent pages (default: 5)")
     args = parser.parse_args()
     
-    # Handle comma-separated URLs
-    urls = [u for u in args.url.split(',') if u.strip()]
+    urls = [u.strip() for u in args.url.split(',') if u.strip()]
+    print(f"Scraping {len(urls)} URLs with concurrency={args.concurrency}")
     
-    results = scrape_urls(urls)
+    results = asyncio.run(scrape_urls_async(urls, args.concurrency))
     
-    if results:
-        print(f"Successfully scraped {len(results)} pages.")
-        payload = {
-            "results": results
-        }
-        
-        if args.callback_url:
-            print(f"Sending batch data to callback URL: {args.callback_url}")
-            try:
-                # Use a larger timeout for batch payloads
-                response = requests.post(args.callback_url, json=payload, timeout=30)
-                print(f"Callback response: {response.status_code} {response.text}")
-            except Exception as e:
-                print(f"Failed to send data to callback: {e}")
-        else:
-            # If no callback, print first result snippet
-            print("No callback URL provided. First result snippet:")
-            if results and results[0].get("content"):
-                 print(results[0]["content"][:500] + "...")
+    successful = len([r for r in results if r["status"] == "success"])
+    failed = len(results) - successful
+    print(f"Completed: {successful} success, {failed} failed")
+    
+    if args.callback_url:
+        print(f"Sending results to callback...")
+        try:
+            response = requests.post(
+                args.callback_url,
+                json={"results": results},
+                timeout=120
+            )
+            print(f"Callback response: {response.status_code}")
+        except Exception as e:
+            print(f"Callback failed: {e}")
     else:
-        print("No results generated.")
-        sys.exit(1)
+        print("No callback URL provided. First result preview:")
+        if results and results[0].get("content"):
+            print(results[0]["content"][:500] + "...")
+
 
 if __name__ == "__main__":
     main()
