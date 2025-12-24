@@ -3,6 +3,51 @@ import argparse
 import requests
 from playwright.async_api import async_playwright
 import html2text
+import trafilatura
+
+
+def extract_content(html_content):
+    """Extract main content using trafilatura, fallback to html2text"""
+    
+    # Try trafilatura first - it handles most sites well
+    extracted = trafilatura.extract(
+        html_content,
+        include_links=True,
+        include_formatting=True,
+        include_tables=True,
+        no_fallback=False,
+    )
+    
+    # If trafilatura extracted meaningful content, use it
+    if extracted and len(extracted.strip()) > 200:
+        return extracted
+    
+    # Fallback to html2text for pages trafilatura can't parse
+    h = html2text.HTML2Text()
+    h.ignore_links = False
+    h.ignore_images = True
+    h.ignore_emphasis = False
+    h.body_width = 0  # Don't wrap lines
+    
+    fallback_content = h.handle(html_content)
+    
+    # Basic cleanup for fallback
+    lines = fallback_content.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        stripped = line.strip()
+        # Skip common junk patterns
+        if stripped and not any([
+            stripped.startswith('Skip to'),
+            stripped.startswith('Cookie'),
+            stripped.startswith('Accept all'),
+            'privacy policy' in stripped.lower(),
+            'terms of service' in stripped.lower(),
+            len(stripped) < 3,
+        ]):
+            cleaned_lines.append(line)
+    
+    return '\n'.join(cleaned_lines)
 
 
 async def scrape_single_url(context, url, semaphore):
@@ -16,18 +61,23 @@ async def scrape_single_url(context, url, semaphore):
         try:
             print(f"Scraping: {url}")
             await page.goto(url, timeout=30000, wait_until="networkidle")
+            
+            # Get the fully rendered HTML (after JS execution)
             html_content = await page.content()
             title = await page.title()
             
-            h = html2text.HTML2Text()
-            h.ignore_links = False
-            h.ignore_images = True
-            markdown_content = h.handle(html_content)
+            # Extract main content using trafilatura
+            content = extract_content(html_content)
+            
+            # Log content size for debugging
+            original_size = len(html_content)
+            extracted_size = len(content) if content else 0
+            print(f"  Content: {original_size:,} chars -> {extracted_size:,} chars ({100-int(extracted_size/original_size*100) if original_size > 0 else 0}% reduction)")
             
             return {
                 "url": url,
                 "title": title,
-                "content": markdown_content,
+                "content": content,
                 "status": "success"
             }
         except Exception as e:
@@ -76,6 +126,10 @@ def main():
     successful = len([r for r in results if r["status"] == "success"])
     failed = len(results) - successful
     print(f"Completed: {successful} success, {failed} failed")
+    
+    # Calculate total content reduction
+    total_content = sum(len(r.get("content", "") or "") for r in results)
+    print(f"Total content size: {total_content:,} characters")
     
     if args.callback_url:
         print(f"Sending results to callback...")
