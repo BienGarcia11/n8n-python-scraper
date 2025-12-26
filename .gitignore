@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 venv/
 .env
+.clinerules/
 
 # Local Test/Config Files
 test_embedding_workflow.json
