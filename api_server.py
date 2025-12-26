@@ -2,7 +2,7 @@ import asyncio
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
-import requests
+import httpx
 from playwright.async_api import async_playwright
 import html2text
 import trafilatura
@@ -190,15 +190,13 @@ async def scrape_urls(request: ScrapeRequest):
     total_content = sum(len(r.get("content", "") or "") for r in results)
     print(f"Total content size: {total_content:,} characters")
     
-    # Send callback if provided (non-blocking)
+    # Send callback if provided (async, awaited)
     if request.callback_url:
         print(f"Sending results to callback: {request.callback_url}")
         try:
-            asyncio.create_task(
-                send_callback(request.callback_url, results)
-            )
+            await send_callback(request.callback_url, results)
         except Exception as e:
-            print(f"Callback failed to schedule: {e}")
+            print(f"Callback failed: {e}")
     
     return ScrapeResponse(
         results=results,
@@ -209,16 +207,28 @@ async def scrape_urls(request: ScrapeRequest):
 
 
 async def send_callback(callback_url: str, results: list):
-    """Send results to callback URL asynchronously"""
-    try:
-        response = requests.post(
-            callback_url,
-            json={"results": results},
-            timeout=120
-        )
-        print(f"Callback response: {response.status_code}")
-    except Exception as e:
-        print(f"Callback failed: {e}")
+    """Send results to callback URL asynchronously using httpx"""
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        try:
+            print(f"POST to callback: {callback_url}")
+            response = await client.post(
+                callback_url,
+                json={"results": results},
+                headers={"Content-Type": "application/json"}
+            )
+            print(f"✅ Callback sent successfully: {response.status_code}")
+            print(f"   Response: {response.text[:200]}")
+            return response
+        except httpx.TimeoutException as e:
+            print(f"❌ Callback timeout: {e}")
+            raise
+        except httpx.HTTPStatusError as e:
+            print(f"❌ Callback HTTP error: {e.response.status_code}")
+            print(f"   Response: {e.response.text[:500]}")
+            raise
+        except Exception as e:
+            print(f"❌ Callback failed: {e}")
+            raise
 
 
 @app.get("/health")

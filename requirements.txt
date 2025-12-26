@@ -1,5 +1,6 @@
 playwright
 requests
+httpx
 html2text
 pytest-playwright
 fastembed
