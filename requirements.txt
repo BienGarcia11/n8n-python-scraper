@@ -5,3 +5,6 @@ pytest-playwright
 fastembed
 langchain-text-splitters
 trafilatura
+fastapi
+uvicorn[standard]
+pydantic
