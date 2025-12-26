@@ -175,6 +175,11 @@ This scraper uses:
 
 ## Troubleshooting
 
+### Error: "Invalid value for '--port': '$PORT' is not a valid integer"
+**Cause**: Railway provides PORT environment variable, but uvicorn was trying to use literal string "$PORT"
+**Solution**: Fixed in Dockerfile - now uses shell to expand ${PORT:-8000} properly
+**Note**: This issue has been resolved in current code. Just redeploy.
+
 ### Browser Cold Start on First Request
 - **Cause**: First request after deployment
 - **Solution**: Wait ~40s for startup to complete
