@@ -84,7 +84,7 @@ async def scrape_single_url(context, url, semaphore):
         page = await context.new_page()
         try:
             print(f"Scraping: {url}")
-            await page.goto(url, timeout=30000, wait_until="networkidle")
+            await page.goto(url, timeout=60000, wait_until="domcontentloaded")
             
             # Get fully rendered HTML (after JS execution)
             html_content = await page.content()
