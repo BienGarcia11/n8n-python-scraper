@@ -151,7 +151,7 @@ async def scrape_single_url(context, url, semaphore, max_retries=3):
 # Global browser context (keep warm)
 browser_context = None
 browser = None  # Keep track of browser instance
-semaphore = asyncio.Semaphore(5)  # Max concurrent requests
+semaphore = asyncio.Semaphore(2)  # Max concurrent requests (reduced from 5 to save memory)
 request_count = 0  # Track total requests for periodic cleanup
 BROWSER_RESTART_INTERVAL = 50  # Restart browser every 50 requests
 
@@ -211,20 +211,35 @@ async def get_browser_context():
     
     if browser_context is None:
         print("Initializing browser context (cold start)...")
-        p = await async_playwright().start()
-        browser = await p.chromium.launch(
-            headless=True,
-            channel="chrome",
-            args=[
-                '--disable-dev-shm-usage',
-                '--disable-setuid-sandbox',
-                '--no-sandbox'
-            ]
-        )
-        browser_context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        print("Browser context ready (warm)")
+        try:
+            p = await async_playwright().start()
+            browser = await p.chromium.launch(
+                headless=True,
+                channel="chrome",
+                args=[
+                    '--disable-dev-shm-usage',
+                    '--disable-setuid-sandbox',
+                    '--no-sandbox',
+                    '--disable-gpu',
+                    '--no-zygote',
+                    '--single-process'  # Single process to reduce memory usage
+                ]
+            )
+            browser_context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            print("Browser context ready (warm)")
+        except Exception as e:
+            print(f"❌ CRITICAL: Browser launch failed - {e}")
+            # Try fallback without Chrome args
+            try:
+                p = await async_playwright().start()
+                browser = await p.chromium.launch(headless=True)
+                browser_context = await browser.new_context()
+                print("Browser context ready (fallback mode)")
+            except Exception as fallback_error:
+                print(f"❌ FATAL: Browser launch failed completely - {fallback_error}")
+                raise RuntimeError(f"Cannot initialize browser: {fallback_error}")
     
     return browser_context
 
