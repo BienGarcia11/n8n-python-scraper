@@ -22,6 +22,7 @@ class ScrapeResult(BaseModel):
     content: Optional[str]
     status: str
     error: Optional[str] = None
+    attempts: Optional[int] = None  # Number of retry attempts
 
 
 class ScrapeResponse(BaseModel):
@@ -75,53 +76,76 @@ def extract_content(html_content):
     return '\n'.join(cleaned_lines)
 
 
-async def scrape_single_url(context, url, semaphore):
-    """Scrape a single URL with concurrency control"""
+async def scrape_single_url(context, url, semaphore, max_retries=3):
+    """Scrape a single URL with concurrency control and retry logic"""
     global request_count
-    async with semaphore:
-        url = url.strip()
-        if not url:
-            return None
-        
-        request_count += 1  # Track requests for periodic cleanup
-        
-        page = await context.new_page()
-        try:
-            print(f"Scraping: {url}")
-            await page.goto(url, timeout=60000, wait_until="domcontentloaded")
-            
-            # Get fully rendered HTML (after JS execution) with timeout
-            html_content = await asyncio.wait_for(page.content(), timeout=30000)
-            title = await asyncio.wait_for(page.title(), timeout=5000)
-            
-            # Extract main content using trafilatura
-            content = extract_content(html_content)
-            
-            # Log content size for debugging
-            original_size = len(html_content)
-            extracted_size = len(content) if content else 0
-            print(f"  Content: {original_size:,} chars -> {extracted_size:,} chars")
-            
-            return {
-                "url": url,
-                "title": title,
-                "content": content,
-                "status": "success"
-            }
-        except Exception as e:
-            print(f"Error: {url} - {e}")
-            return {
-                "url": url,
-                "title": None,
-                "content": None,
-                "status": "error",
-                "error": str(e)
-            }
-        finally:
+    
+    url = url.strip()
+    if not url:
+        return None
+    
+    request_count += 1  # Track requests for periodic cleanup
+    
+    # Retry logic
+    last_error = None
+    for attempt in range(max_retries):
+        async with semaphore:
+            page = await context.new_page()
             try:
-                await page.close()
+                print(f"Scraping: {url} (attempt {attempt + 1}/{max_retries})")
+                await page.goto(url, timeout=60000, wait_until="domcontentloaded")
+                
+                # Get fully rendered HTML (after JS execution) with timeout
+                html_content = await asyncio.wait_for(page.content(), timeout=30000)
+                title = await asyncio.wait_for(page.title(), timeout=5000)
+                
+                # Extract main content using trafilatura
+                content = extract_content(html_content)
+                
+                # Validate we got actual content (not just junk)
+                if not content or len(content.strip()) < 50:
+                    raise ValueError("Extracted content too short (< 50 chars)")
+                
+                # Log content size for debugging
+                original_size = len(html_content)
+                extracted_size = len(content) if content else 0
+                print(f"  ✓ Success: {original_size:,} chars -> {extracted_size:,} chars")
+                
+                return {
+                    "url": url,
+                    "title": title,
+                    "content": content,
+                    "status": "success",
+                    "attempts": attempt + 1
+                }
+            except asyncio.TimeoutError as e:
+                last_error = f"Timeout: {str(e)}"
+                print(f"  ⏱️ Timeout on attempt {attempt + 1}")
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff: 2s, 4s, 8s
+            except ValueError as e:
+                last_error = f"Validation: {str(e)}"
+                print(f"  ❌ Validation failed on attempt {attempt + 1}: {e}")
+                await asyncio.sleep(1)
             except Exception as e:
-                print(f"Warning: Failed to close page - {e}")
+                last_error = str(e)
+                print(f"  ❌ Error on attempt {attempt + 1}: {e}")
+                await asyncio.sleep(1)
+            finally:
+                try:
+                    await page.close()
+                except Exception as e:
+                    print(f"Warning: Failed to close page - {e}")
+    
+    # All retries failed
+    print(f"  ❌ FAILED after {max_retries} attempts: {url}")
+    return {
+        "url": url,
+        "title": None,
+        "content": None,
+        "status": "error",
+        "error": last_error,
+        "attempts": max_retries
+    }
 
 
 # Global browser context (keep warm)
@@ -243,10 +267,16 @@ async def shutdown_event():
 @app.post("/scrape", response_model=ScrapeResponse)
 async def scrape_urls(request: ScrapeRequest):
     """
-    Scrape multiple URLs concurrently
+    Scrape multiple URLs concurrently with retry logic
     
     - **urls**: List of URLs to scrape (max 100)
     - **callback_url**: Optional URL to send results to (async)
+    
+    **Features:**
+    - Automatic retry (3 attempts) for failed URLs
+    - Exponential backoff on timeouts
+    - Content validation (minimum 50 chars)
+    - Detailed attempt logging
     """
     
     if len(request.urls) > 100:
@@ -255,7 +285,8 @@ async def scrape_urls(request: ScrapeRequest):
     if not request.urls:
         raise HTTPException(status_code=400, detail="At least one URL is required")
     
-    print(f"Scraping {len(request.urls)} URLs...")
+    print(f"\n🚀 Starting batch of {len(request.urls)} URLs...")
+    print(f"   Concurrency limit: {semaphore._value} (max 5 parallel)")
     
     context = await get_browser_context()
     tasks = [scrape_single_url(context, url, semaphore) for url in request.urls]
@@ -267,19 +298,33 @@ async def scrape_urls(request: ScrapeRequest):
     successful = len([r for r in results if r["status"] == "success"])
     failed = len(results) - successful
     
-    print(f"Completed: {successful} success, {failed} failed")
-    
     # Calculate total content
     total_content = sum(len(r.get("content", "") or "") for r in results)
-    print(f"Total content size: {total_content:,} characters")
+    
+    print(f"\n📊 Batch Summary:")
+    print(f"   Total URLs: {len(request.urls)}")
+    print(f"   ✓ Success: {successful}")
+    print(f"   ❌ Failed: {failed}")
+    print(f"   Content size: {total_content:,} characters")
+    
+    # Log failed URLs for retry tracking
+    failed_urls = [r["url"] for r in results if r["status"] == "error"]
+    if failed_urls:
+        print(f"\n⚠️ Failed URLs (will be retried):")
+        for url in failed_urls:
+            error_info = next(r["error"] for r in results if r["url"] == url)
+            print(f"   - {url}")
+            print(f"     Error: {error_info}")
     
     # Send callback if provided (async, awaited)
     if request.callback_url:
-        print(f"Sending results to callback: {request.callback_url}")
+        print(f"\n📤 Sending results to callback: {request.callback_url}")
         try:
             await send_callback(request.callback_url, results)
+            print("✅ Callback completed successfully")
         except Exception as e:
-            print(f"Callback failed: {e}")
+            print(f"❌ Callback failed: {e}")
+            raise
     
     return ScrapeResponse(
         results=results,
