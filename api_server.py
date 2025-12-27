@@ -86,9 +86,9 @@ async def scrape_single_url(context, url, semaphore):
             print(f"Scraping: {url}")
             await page.goto(url, timeout=60000, wait_until="domcontentloaded")
             
-            # Get fully rendered HTML (after JS execution)
-            html_content = await page.content()
-            title = await page.title()
+            # Get fully rendered HTML (after JS execution) with timeout
+            html_content = await asyncio.wait_for(page.content(), timeout=30000)
+            title = await asyncio.wait_for(page.title(), timeout=5000)
             
             # Extract main content using trafilatura
             content = extract_content(html_content)
