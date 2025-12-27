@@ -1,4 +1,5 @@
 import asyncio
+import gc
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
@@ -76,10 +77,13 @@ def extract_content(html_content):
 
 async def scrape_single_url(context, url, semaphore):
     """Scrape a single URL with concurrency control"""
+    global request_count
     async with semaphore:
         url = url.strip()
         if not url:
             return None
+        
+        request_count += 1  # Track requests for periodic cleanup
         
         page = await context.new_page()
         try:
@@ -114,24 +118,84 @@ async def scrape_single_url(context, url, semaphore):
                 "error": str(e)
             }
         finally:
-            await page.close()
+            try:
+                await page.close()
+            except Exception as e:
+                print(f"Warning: Failed to close page - {e}")
 
 
 # Global browser context (keep warm)
 browser_context = None
+browser = None  # Keep track of browser instance
 semaphore = asyncio.Semaphore(5)  # Max concurrent requests
+request_count = 0  # Track total requests for periodic cleanup
+BROWSER_RESTART_INTERVAL = 50  # Restart browser every 50 requests
+
+
+async def restart_browser():
+    """Restart browser to clear memory leaks"""
+    global browser_context, browser
+    
+    print("🔄 Restarting browser to clear memory...")
+    
+    # Close old context and browser
+    if browser_context:
+        try:
+            await browser_context.close()
+            print("✓ Old browser context closed")
+        except Exception as e:
+            print(f"Warning: Failed to close browser context - {e}")
+    
+    if browser:
+        try:
+            await browser.close()
+            print("✓ Old browser closed")
+        except Exception as e:
+            print(f"Warning: Failed to close browser - {e}")
+    
+    # Force garbage collection to free memory
+    gc.collect()
+    print("✓ Garbage collection completed")
+    
+    # Start new browser
+    p = await async_playwright().start()
+    browser = await p.chromium.launch(
+        headless=True,
+        channel="chrome",
+        args=[
+            '--disable-dev-shm-usage',
+            '--disable-setuid-sandbox',
+            '--no-sandbox'
+        ]
+    )
+    browser_context = await browser.new_context(
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    )
+    print("✓ New browser context ready")
 
 
 async def get_browser_context():
-    """Get or create browser context (keep warm)"""
-    global browser_context
+    """Get or create browser context with periodic restarts"""
+    global browser_context, request_count
+    
+    # Check if browser needs restart
+    if request_count >= BROWSER_RESTART_INTERVAL:
+        print(f"🔄 Request count {request_count}, triggering browser restart...")
+        await restart_browser()
+        request_count = 0
+        return browser_context
     
     if browser_context is None:
         print("Initializing browser context (cold start)...")
         p = await async_playwright().start()
         browser = await p.chromium.launch(
             headless=True,
-            channel="chrome"  # Use Chrome if available, otherwise Chromium
+            channel="chrome",
+            args=[
+                '--disable-dev-shm-usage',
+                '--disable-setuid-sandbox',
+                '--no-sandbox'
+            ]
         )
         browser_context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -151,10 +215,29 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown"""
-    global browser_context
+    global browser_context, browser
+    print("🛑 Shutting down scraper...")
+    
+    # Close browser context
     if browser_context:
-        await browser_context.close()
-        print("Browser context closed")
+        try:
+            await browser_context.close()
+            print("✓ Browser context closed")
+        except Exception as e:
+            print(f"Warning: Failed to close browser context - {e}")
+    
+    # Close browser
+    if browser:
+        try:
+            await browser.close()
+            print("✓ Browser closed")
+        except Exception as e:
+            print(f"Warning: Failed to close browser - {e}")
+    
+    # Force final garbage collection
+    gc.collect()
+    print("✓ Final garbage collection completed")
+    print("✓ Shutdown complete")
 
 
 @app.post("/scrape", response_model=ScrapeResponse)
@@ -234,10 +317,12 @@ async def send_callback(callback_url: str, results: list):
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    global browser_context
+    global browser_context, request_count
     return {
         "status": "healthy",
-        "browser_warm": browser_context is not None
+        "browser_warm": browser_context is not None,
+        "request_count": request_count,
+        "restarts_pending": request_count >= BROWSER_RESTART_INTERVAL
     }
 
 
