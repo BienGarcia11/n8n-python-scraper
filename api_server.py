@@ -11,6 +11,8 @@ import httpx
 from playwright.async_api import async_playwright
 import html2text
 import trafilatura
+from supabase import create_client
+from openai import OpenAI
 
 app = FastAPI(title="Web Scraper API", version="1.0.0")
 
@@ -449,9 +451,6 @@ async def scrape_bulk_urls():
     - pending_count: Number of URLs to scrape
     - status: "started" | "running" | "completed"
     """
-    import os
-    from supabase import create_client
-    from openai import OpenAI
     
     global bulk_status, bulk_task
     
