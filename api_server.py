@@ -169,7 +169,9 @@ bulk_status = {
     "failed": 0,
     "cancelled": False
 }
-MAX_BULK_URLS = 100  # Safety limit: maximum URLs per bulk scrape
+# Load configurable settings from environment variables
+MAX_BULK_URLS = int(os.getenv("MAX_BULK_URLS", "100"))  # Safety limit: maximum URLs per bulk scrape
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")  # OpenAI embedding model
 
 
 async def restart_browser():
@@ -550,7 +552,7 @@ async def scrape_bulk_urls():
                             try:
                                 openai_client = OpenAI(api_key=openai_key)
                                 response = openai_client.embeddings.create(
-                                    model="text-embedding-3-small",
+                                    model=EMBEDDING_MODEL,
                                     input=content[:8191]
                                 )
                                 embedding = response.data[0].embedding

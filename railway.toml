@@ -6,3 +6,6 @@ healthcheckPath = "/health"
 healthcheckTimeout = 10000
 
 [env]
+# Bulk Scraper Configuration
+MAX_BULK_URLS = "100"
+EMBEDDING_MODEL = "text-embedding-3-small"
