@@ -1,5 +1,8 @@
 import asyncio
 import gc
+import traceback
+import uuid
+from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
@@ -154,6 +157,19 @@ browser = None  # Keep track of browser instance
 semaphore = asyncio.Semaphore(2)  # Max concurrent requests (reduced from 5 to save memory)
 request_count = 0  # Track total requests for periodic cleanup
 BROWSER_RESTART_INTERVAL = 50  # Restart browser every 50 requests
+
+# Bulk scraper control
+bulk_task = None  # Track current bulk scrape task
+bulk_status = {
+    "running": False,
+    "task_id": None,
+    "started_at": None,
+    "total_urls": 0,
+    "processed": 0,
+    "failed": 0,
+    "cancelled": False
+}
+MAX_BULK_URLS = 100  # Safety limit: maximum URLs per bulk scrape
 
 
 async def restart_browser():
@@ -393,9 +409,306 @@ async def root():
         "service": "Web Scraper API",
         "version": "1.0.0",
         "endpoints": {
-            "POST /scrape": "Scrape URLs",
+            "POST /scrape": "Scrape URLs (batch)",
+            "POST /scrape/bulk": "Scrape all pending URLs (bulk)",
+            "GET /scrape/bulk/status": "Check bulk scrape progress",
+            "POST /scrape/bulk/stop": "Stop running bulk scrape",
             "GET /health": "Health check"
+        },
+        "safety_limits": {
+            "max_bulk_urls": MAX_BULK_URLS,
+            "max_concurrent": 2,
+            "batch_size": 3
         }
+    }
+
+
+@app.post("/scrape/bulk")
+async def scrape_bulk_urls():
+    """
+    Trigger bulk scraping of all pending URLs from database
+    
+    This endpoint:
+    1. Fetches all pending URLs from Supabase
+    2. Scrapes them in batches with retry logic
+    3. Imports content with embeddings to documents table
+    4. Updates URL statuses to completed
+    
+    Runs asynchronously and returns immediately with a task ID.
+    
+    **Safety Controls:**
+    - Maximum 100 URLs per run (configurable)
+    - Check current status before starting
+    - Can be stopped via POST /scrape/bulk/stop
+    
+    Returns:
+    - task_id: Unique identifier for this bulk job
+    - pending_count: Number of URLs to scrape
+    - status: "started" | "running" | "completed"
+    """
+    import os
+    from supabase import create_client
+    from openai import OpenAI
+    
+    global bulk_status, bulk_task
+    
+    # Check if already running
+    if bulk_status["running"]:
+        return {
+            "status": "already_running",
+            "task_id": bulk_status["task_id"],
+            "message": "Bulk scraper is already running. Use GET /scrape/bulk/status to check progress.",
+            "stop_command": "POST /scrape/bulk/stop to cancel"
+        }
+    
+    # Environment variables
+    supabase_url = os.getenv("SUPABASE_URL", "https://ykohyrwipxpwztptfopi.supabase.co")
+    supabase_key = os.getenv("SUPABASE_KEY")
+    openai_key = os.getenv("OPENAI_API_KEY")
+    
+    if not supabase_key:
+        raise HTTPException(status_code=500, detail="SUPABASE_KEY not configured")
+    
+    # Connect to Supabase
+    client = create_client(supabase_url, supabase_key)
+    
+    # Fetch pending URLs (with safety limit)
+    result = client.table("url_queue").select("*").eq("status", "pending").limit(MAX_BULK_URLS).execute()
+    pending_urls = result.data if result.data else []
+    
+    if not pending_urls:
+        return {
+            "task_id": str(uuid.uuid4()),
+            "status": "completed",
+            "pending_count": 0,
+            "message": "No pending URLs to scrape"
+        }
+    
+    task_id = str(uuid.uuid4())
+    pending_count = len(pending_urls)
+    
+    # Update bulk status
+    bulk_status.update({
+        "running": True,
+        "task_id": task_id,
+        "started_at": datetime.utcnow().isoformat(),
+        "total_urls": pending_count,
+        "processed": 0,
+        "failed": 0,
+        "cancelled": False
+    })
+    
+    # Create background task closure
+    async def run_bulk_task():
+        nonlocal client, openai_key
+        context = await get_browser_context()
+        batch_size = 3
+        urls = [u["url"] for u in pending_urls]
+        batches = [urls[i:i + batch_size] for i in range(0, len(urls), batch_size)]
+        total_successful = 0
+        total_failed = 0
+        
+        print(f"\n{'='*60}")
+        print(f"BULK SCRAPE TASK: {task_id}")
+        print(f"Pending URLs: {pending_count}")
+        print(f"Safety limit: {MAX_BULK_URLS} URLs per run")
+        
+        for batch_num, batch in enumerate(batches, 1):
+            # Check if cancelled
+            if bulk_status["cancelled"]:
+                print(f"\n⛔ BULK SCRAPE CANCELLED by user")
+                print(f"Processed: {total_successful}/{pending_count} URLs")
+                break
+            
+            print(f"\nBATCH {batch_num}/{len(batches)}: {len(batch)} URLs")
+            
+            # Mark as processing
+            for url in batch:
+                try:
+                    client.table("url_queue").update({"status": "processing"}).eq("url", url).execute()
+                except Exception as e:
+                    print(f"  ⚠️  Failed to mark {url} as processing: {e}")
+            
+            # Scrape batch
+            tasks = [scrape_single_url(context, url, semaphore) for url in batch]
+            results = await asyncio.gather(*tasks)
+            
+            # Process results
+            for result in results:
+                if not result:
+                    continue
+                
+                url = result["url"]
+                
+                if result["status"] == "success":
+                    try:
+                        # Generate embedding
+                        content = result["content"]
+                        embedding = None
+                        
+                        if openai_key:
+                            try:
+                                openai_client = OpenAI(api_key=openai_key)
+                                response = openai_client.embeddings.create(
+                                    model="text-embedding-3-small",
+                                    input=content[:8191]
+                                )
+                                embedding = response.data[0].embedding
+                            except Exception as e:
+                                print(f"  ⚠️  Embedding failed: {e}")
+                        
+                        # Insert document
+                        insert_data = {
+                            "content": content,
+                            "metadata": {
+                                "source": url,
+                                "source_type": "web_scrape",
+                                "title": result["title"],
+                                "scraped_at": datetime.utcnow().isoformat()
+                            }
+                        }
+                        
+                        if embedding:
+                            insert_data["embedding"] = embedding
+                        else:
+                            insert_data["metadata"]["no_embedding"] = True
+                        
+                        client.table("documents").insert(insert_data).execute()
+                        
+                        # Mark as completed (status only, content is in documents table)
+                        client.table("url_queue").update({
+                            "status": "completed"
+                        }).eq("url", url).execute()
+                        
+                        total_successful += 1
+                        bulk_status["processed"] += 1
+                        print(f"  ✓ {url[:50]}...")
+                        
+                    except Exception as e:
+                        print(f"  ❌ Failed to process {url}: {e}")
+                        total_failed += 1
+                        bulk_status["failed"] += 1
+                        client.table("url_queue").update({"status": "failed"}).eq("url", url).execute()
+                else:
+                    # Mark as failed
+                    total_failed += 1
+                    bulk_status["failed"] += 1
+                    client.table("url_queue").update({"status": "failed"}).eq("url", url).execute()
+                    print(f"  ❌ {url[:50]}... - {result.get('error', 'Unknown error')}")
+            
+            print(f"Batch {batch_num} complete: {sum(1 for r in results if r and r['status'] == 'success')} success")
+        
+        # Reset status after completion
+        if not bulk_status["cancelled"]:
+            print(f"\n{'='*60}")
+            print(f"BULK SCRAPE COMPLETE: {task_id}")
+            print(f"Total: {pending_count}")
+            print(f"Success: {total_successful}")
+            print(f"Failed: {total_failed}")
+            print(f"Success rate: {total_successful/pending_count*100:.1f}%")
+        
+        bulk_status["running"] = False
+        bulk_status["task_id"] = None
+    
+    # Run background task
+    bulk_task = asyncio.create_task(run_bulk_task())
+    
+    return {
+        "task_id": task_id,
+        "status": "started",
+        "pending_count": pending_count,
+        "message": f"Started bulk scraping {pending_count} URLs",
+        "safety_limit": f"Max {MAX_BULK_URLS} URLs per run",
+        "note": "This task runs asynchronously. Check Railway logs for progress."
+    }
+
+
+@app.get("/scrape/bulk/status")
+async def bulk_status_check():
+    """
+    Get current bulk scraping status
+    
+    Returns:
+    - running: True/False if bulk scraper is active
+    - task_id: Current task ID
+    - started_at: When task started
+    - total_urls: Total URLs to process
+    - processed: URLs processed so far
+    - failed: URLs failed so far
+    - progress: Percentage complete
+    - cancelled: If task was cancelled
+    """
+    if not bulk_status["running"]:
+        return {
+            "running": False,
+            "message": "No bulk scrape task is currently running",
+            "start_command": "POST /scrape/bulk to start"
+        }
+    
+    # Calculate progress
+    progress = (bulk_status["processed"] + bulk_status["failed"]) / bulk_status["total_urls"] * 100 if bulk_status["total_urls"] > 0 else 0
+    
+    return {
+        "running": True,
+        "task_id": bulk_status["task_id"],
+        "started_at": bulk_status["started_at"],
+        "total_urls": bulk_status["total_urls"],
+        "processed": bulk_status["processed"],
+        "failed": bulk_status["failed"],
+        "progress": round(progress, 1),
+        "cancelled": bulk_status["cancelled"],
+        "stop_command": "POST /scrape/bulk/stop to cancel"
+    }
+
+
+@app.post("/scrape/bulk/stop")
+async def stop_bulk_scrape():
+    """
+    Stop currently running bulk scrape task
+    
+    This will:
+    1. Mark current task as cancelled
+    2. Stop processing after current batch completes
+    3. URLs marked as 'processing' will stay in that state
+    4. Return summary of what was processed
+    
+    Returns:
+    - status: "stopped" or "not_running"
+    - task_id: Task that was stopped
+    - summary: What was processed before stop
+    """
+    global bulk_status, bulk_task
+    
+    if not bulk_status["running"]:
+        return {
+            "status": "not_running",
+            "message": "No bulk scrape task is currently running"
+        }
+    
+    # Mark as cancelled
+    bulk_status["cancelled"] = True
+    
+    # Get summary before reset
+    task_id = bulk_status["task_id"]
+    summary = {
+        "task_id": task_id,
+        "total_urls": bulk_status["total_urls"],
+        "processed": bulk_status["processed"],
+        "failed": bulk_status["failed"],
+        "progress": round((bulk_status["processed"] + bulk_status["failed"]) / bulk_status["total_urls"] * 100, 1) if bulk_status["total_urls"] > 0 else 0
+    }
+    
+    # Wait for task to finish gracefully (up to 5 seconds)
+    try:
+        await asyncio.wait_for(bulk_task, timeout=5.0)
+    except asyncio.TimeoutError:
+        print(f"⚠️ Task stop timeout - force cancelling")
+    
+    return {
+        "status": "stopped",
+        "message": "Bulk scraper stopped after current batch completes",
+        "summary": summary,
+        "note": "URLs in 'processing' status will remain and can be retried"
     }
 
 
