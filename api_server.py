@@ -475,8 +475,21 @@ async def scrape_bulk_urls():
     client = create_client(supabase_url, supabase_key)
     
     # Fetch pending URLs (with safety limit)
-    result = client.table("url_queue").select("*").eq("status", "pending").limit(MAX_BULK_URLS).execute()
-    pending_urls = result.data if result.data else []
+    # Supabase limits .limit() to 1000, so we need to fetch in batches
+    pending_urls = []
+    batch_size = 1000
+    offset = 0
+    while len(pending_urls) < MAX_BULK_URLS:
+        result = client.table("url_queue").select("*").eq("status", "pending").range(offset, offset + batch_size - 1).execute()
+        batch = result.data if result.data else []
+        if not batch:
+            break
+        pending_urls.extend(batch)
+        offset += batch_size
+        # Safety check: don't exceed MAX_BULK_URLS
+        if len(pending_urls) >= MAX_BULK_URLS:
+            pending_urls = pending_urls[:MAX_BULK_URLS]
+            break
     
     if not pending_urls:
         return {
