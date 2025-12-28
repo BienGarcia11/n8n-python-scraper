@@ -4,7 +4,7 @@ buildCommand = "docker build --build-arg BUILD_TIMESTAMP=$(date +%s) -t app ."
 
 [deploy]
 healthcheckPath = "/health"
-healthcheckTimeout = 10000
+healthcheckTimeout = 60000
 
 [env]
 # Bulk Scraper Configuration
