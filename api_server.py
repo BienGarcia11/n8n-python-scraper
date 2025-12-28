@@ -14,6 +14,7 @@ import trafilatura
 from supabase import create_client
 from openai import OpenAI
 
+# v2 - fix for 10000 URL limit
 app = FastAPI(title="Web Scraper API", version="1.0.0")
 
 

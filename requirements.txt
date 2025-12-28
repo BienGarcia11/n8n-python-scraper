@@ -9,3 +9,5 @@ trafilatura
 fastapi
 uvicorn[standard]
 pydantic
+supabase
+openai

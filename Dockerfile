@@ -50,7 +50,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Install Playwright browsers
 RUN playwright install chromium
 
-# Copy application code
+# Copy application code (v2 - fix for 10000 URL limit)
 COPY api_server.py .
 
 # Expose port
