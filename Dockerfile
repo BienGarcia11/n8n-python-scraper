@@ -1,6 +1,10 @@
 # Use Python 3.11 slim image
 FROM python:3.11-slim
 
+# Build timestamp to force clean rebuilds when environment changes
+ARG BUILD_TIMESTAMP=0
+ENV BUILD_TIMESTAMP=${BUILD_TIMESTAMP}
+
 # Set working directory
 WORKDIR /app
 

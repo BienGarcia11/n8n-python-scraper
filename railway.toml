@@ -1,5 +1,6 @@
 [build]
 builder = "DOCKERFILE"
+buildCommand = "docker build --build-arg BUILD_TIMESTAMP=$(date +%s) -t app ."
 
 [deploy]
 healthcheckPath = "/health"
