@@ -8,5 +8,5 @@ healthcheckTimeout = 10000
 
 [env]
 # Bulk Scraper Configuration
-MAX_BULK_URLS = "100"
+MAX_BULK_URLS = "10000"
 EMBEDDING_MODEL = "text-embedding-3-small"
