@@ -38,7 +38,9 @@
             "position": [
                 460,
                 300
-            ]
+            ],
+            "notesInFlow": true,
+            "notes": "GET /scrape/bulk/status\n\nChecks current bulk scrape status:\n- Running state (true/false)\n- Task ID\n- Progress percentage\n- Processed count\n- Failed count\n\nUse when: Monitoring ongoing scrape jobs"
         },
         {
             "parameters": {
@@ -111,7 +113,9 @@
             "position": [
                 460,
                 620
-            ]
+            ],
+            "notesInFlow": true,
+            "notes": "POST /scrape/bulk\n\nStarts automated bulk scraping:\n- Fetches all pending URLs from database\n- Processes in batches of 3 URLs\n- Generates OpenAI embeddings\n- Updates documents table\n- Safety limit: 100 URLs per run\n\nUse when: Ready to scrape pending URLs"
         },
         {
             "parameters": {
@@ -203,7 +207,9 @@
             "position": [
                 680,
                 940
-            ]
+            ],
+            "notesInFlow": true,
+            "notes": "POST /scrape/bulk/reset\n\nResets URLs older than X days to 'pending':\n- Body: {\"reset_all\": false, \"days_threshold\": 14}\n- Default: 14 days threshold\n- Changes status from completed/failed/processing to pending\n- Enables re-scraping old content\n\nUse when: Scheduled 2-week refresh cycle"
         },
         {
             "parameters": {
@@ -295,7 +301,9 @@
             "position": [
                 680,
                 1280
-            ]
+            ],
+            "notesInFlow": true,
+            "notes": "POST /scrape/bulk/reset\n\nResets specific URL statuses:\n- Body: {\"reset_all\": false, \"status\": \"completed\"}\n- Options: \"completed\" | \"failed\" | \"processing\"\n- Changes selected status to pending\n\nEdit 'Set Reset Status Parameters' node to change status value\n\nUse when: Selective re-scraping needed"
         },
         {
             "parameters": {
@@ -356,7 +364,9 @@
             "position": [
                 460,
                 1620
-            ]
+            ],
+            "notesInFlow": true,
+            "notes": "POST /scrape/bulk/stop\n\nStops currently running bulk scrape:\n- Marks task as cancelled\n- Completes current batch before stopping\n- Returns summary of progress\n- URLs in 'processing' status will remain\n\nUse when: Emergency stop needed"
         },
         {
             "parameters": {
@@ -417,7 +427,9 @@
             "position": [
                 460,
                 1960
-            ]
+            ],
+            "notesInFlow": true,
+            "notes": "GET /health\n\nChecks API and browser status:\n- Service health status\n- Browser warm state (ready/not ready)\n- Total request count\n- Browser restart pending (true/false)\n\nUse when: Verifying service availability or troubleshooting"
         },
         {
             "parameters": {
