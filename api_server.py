@@ -574,14 +574,16 @@ async def scrape_bulk_urls():
                             except Exception as e:
                                 print(f"  ⚠️  Embedding failed: {e}")
                         
-                        # Insert document
+                        # Insert or update document (upsert - prevents duplicates)
                         insert_data = {
                             "content": content,
+                            "source": url,  # Separate column for uniqueness constraint
                             "metadata": {
                                 "source": url,
                                 "source_type": "web_scrape",
                                 "title": result["title"],
-                                "scraped_at": datetime.utcnow().isoformat()
+                                "scraped_at": datetime.utcnow().isoformat(),
+                                "updated_at": datetime.utcnow().isoformat()  # Track updates
                             }
                         }
                         
@@ -590,7 +592,8 @@ async def scrape_bulk_urls():
                         else:
                             insert_data["metadata"]["no_embedding"] = True
                         
-                        client.table("documents").insert(insert_data).execute()
+                        # Use upsert to update existing documents instead of creating duplicates
+                        client.table("documents").upsert(insert_data, on_conflict="source").execute()
                         
                         # Mark as completed (status only, content is in documents table)
                         client.table("url_queue").update({
