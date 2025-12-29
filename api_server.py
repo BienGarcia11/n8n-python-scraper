@@ -517,25 +517,35 @@ async def scrape_bulk_urls():
                         if embedding:
                             insert_data["embedding"] = embedding
                         
-                        # Use upsert to update existing documents instead of failing
+                        # Check if document already exists and update, or insert new
                         try:
-                            client.table("documents").upsert(
-                                insert_data,
-                                on_conflict="metadata->source"  # Match on URL field in metadata
-                            ).execute()
-                            print(f"  ✓ {url[:50]}... (upserted)")
+                            # Try to find existing document by URL
+                            existing = client.table("documents").select("*").eq("metadata->>->source", url).execute()
+                            if existing.data and len(existing.data) > 0:
+                                # Document exists - update it
+                                doc_id = existing.data[0]["id"]
+                                client.table("documents").update(insert_data).eq("id", doc_id).execute()
+                                print(f"  ✓ {url[:50]}... (updated existing)")
+                            else:
+                                # Document doesn't exist - insert new
+                                client.table("documents").insert(insert_data).execute()
+                                print(f"  ✓ {url[:50]}... (inserted new)")
                         except Exception as e:
-                            # Check if it's a duplicate constraint violation (already exists)
-                            if "duplicate" in str(e).lower():
-                                print(f"  ℹ️  {url[:50]}... (already exists, updating)")
-                                # Try to update the existing document instead
+                            # If insert fails with duplicate, try updating anyway
+                            if "duplicate" in str(e).lower() or "unique constraint" in str(e).lower():
+                                print(f"  ℹ️  {url[:50]}... (duplicate detected, finding existing)")
                                 try:
-                                    client.table("documents").update(insert_data).eq("metadata->>->source", url).execute()
-                                    print(f"  ✓ {url[:50]}... (updated)")
+                                    existing = client.table("documents").select("*").eq("metadata->>->source", url).execute()
+                                    if existing.data and len(existing.data) > 0:
+                                        doc_id = existing.data[0]["id"]
+                                        client.table("documents").update(insert_data).eq("id", doc_id).execute()
+                                        print(f"  ✓ {url[:50]}... (updated after retry)")
+                                    else:
+                                        print(f"  ❌ Could not find existing document for {url}")
                                 except Exception as update_error:
                                     print(f"  ❌ Failed to update {url}: {update_error}")
                             else:
-                                print(f"  ❌ Failed to upsert {url}: {e}")
+                                print(f"  ❌ Failed to process document for {url}: {e}")
                         
                         client.table("url_queue").update({"status": "completed"}).eq("url", url).execute()
                         total_successful += 1
