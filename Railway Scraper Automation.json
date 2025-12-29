@@ -338,5 +338,40 @@
             ]
         }
     ],
-    "connections": {}
+    "connections": {
+        "Manual Trigger": {
+            "main": [
+                {
+                    "index": 0,
+                    "node": "Check Bulk Status",
+                    "type": "main"
+                },
+                {
+                    "index": 1,
+                    "node": "Start Bulk Scrape",
+                    "type": "main"
+                },
+                {
+                    "index": 2,
+                    "node": "Reset by Age (14 Days)",
+                    "type": "main"
+                },
+                {
+                    "index": 3,
+                    "node": "Reset Completed URLs",
+                    "type": "main"
+                },
+                {
+                    "index": 4,
+                    "node": "Stop Bulk Scrape",
+                    "type": "main"
+                },
+                {
+                    "index": 5,
+                    "node": "Check API Health",
+                    "type": "main"
+                }
+            ]
+        }
+    }
 }
