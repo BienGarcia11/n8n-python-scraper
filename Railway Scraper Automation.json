@@ -11,20 +11,7 @@
                 300
             ],
             "notesInFlow": true,
-            "notes": "Click to manually trigger automation\nSelect which action to run below"
-        },
-        {
-            "parameters": {},
-            "name": "Sticky Note - Status Check",
-            "type": "n8n-nodes-base.stickyNote",
-            "typeVersion": 1,
-            "position": [
-                460,
-                100
-            ],
-            "width": 300,
-            "height": 120,
-            "notes": "# 📊 Status Check\n\nChecks current bulk scrape status:\n- Running state\n- Task ID\n- Progress percentage\n- Success/failure counts\n\nUse when: Monitoring ongoing scrape jobs"
+            "notes": "🎯 Manual Trigger\n\nClick to execute workflow\nSelect which operation to run:\n- Click on any HTTP Request node below\n- View results from Format node"
         },
         {
             "parameters": {
@@ -40,7 +27,7 @@
                 300
             ],
             "notesInFlow": true,
-            "notes": "GET /scrape/bulk/status\n\nChecks current bulk scrape status:\n- Running state (true/false)\n- Task ID\n- Progress percentage\n- Processed count\n- Failed count\n\nUse when: Monitoring ongoing scrape jobs"
+            "notes": "📊 GET /scrape/bulk/status\n\nChecks current bulk scrape status\n\nReturns:\n- running: true/false\n- task_id: Unique ID\n- progress: Percentage\n- processed: Count\n- failed: Count\n\nUse when: Monitoring ongoing scrape jobs"
         },
         {
             "parameters": {
@@ -89,19 +76,6 @@
             ]
         },
         {
-            "parameters": {},
-            "name": "Sticky Note - Start Bulk Scrape",
-            "type": "n8n-nodes-base.stickyNote",
-            "typeVersion": 1,
-            "position": [
-                460,
-                440
-            ],
-            "width": 300,
-            "height": 120,
-            "notes": "# 🚀 Start Bulk Scrape\n\nStarts automated bulk scraping:\n- Fetches all pending URLs\n- Processes in batches of 3\n- Generates embeddings\n- Updates documents table\n\nSafety limit: 100 URLs per run"
-        },
-        {
             "parameters": {
                 "method": "POST",
                 "url": "https://n8n-python-scraper-production.up.railway.app/scrape/bulk",
@@ -115,7 +89,7 @@
                 620
             ],
             "notesInFlow": true,
-            "notes": "POST /scrape/bulk\n\nStarts automated bulk scraping:\n- Fetches all pending URLs from database\n- Processes in batches of 3 URLs\n- Generates OpenAI embeddings\n- Updates documents table\n- Safety limit: 100 URLs per run\n\nUse when: Ready to scrape pending URLs"
+            "notes": "🚀 POST /scrape/bulk\n\nStarts automated bulk scraping\n\nReturns:\n- task_id: Unique ID\n- status: started/running\n- pending_count: Number of URLs\n\nSafety limit: 100 URLs per run\nBatches of 3 URLs\n\nUse when: Ready to scrape pending URLs"
         },
         {
             "parameters": {
@@ -152,64 +126,23 @@
             ]
         },
         {
-            "parameters": {},
-            "name": "Sticky Note - Reset by Age",
-            "type": "n8n-nodes-base.stickyNote",
-            "typeVersion": 1,
-            "position": [
-                460,
-                760
-            ],
-            "width": 300,
-            "height": 120,
-            "notes": "# 🔄 Reset URLs by Age\n\nResets URLs older than X days:\n- Default: 14 days\n- Changes status to 'pending'\n- Enables re-scraping old content\n\nUse when: Scheduled 2-week refresh cycle"
-        },
-        {
-            "parameters": {
-                "assignments": {
-                    "assignments": [
-                        {
-                            "id": "3-1",
-                            "name": "reset_all",
-                            "value": false,
-                            "type": "boolean"
-                        },
-                        {
-                            "id": "3-2",
-                            "name": "days_threshold",
-                            "value": 14,
-                            "type": "number"
-                        }
-                    ]
-                },
-                "options": {}
-            },
-            "name": "Set Reset Age Parameters",
-            "type": "n8n-nodes-base.set",
-            "typeVersion": 3.4,
-            "position": [
-                460,
-                940
-            ]
-        },
-        {
             "parameters": {
                 "method": "POST",
                 "url": "https://n8n-python-scraper-production.up.railway.app/scrape/bulk/reset",
                 "sendBody": true,
                 "specifyBody": "json",
-                "jsonBody": "={{ { \"reset_all\": $json.reset_all, \"days_threshold\": $json.days_threshold } }}",
+                "jsonBody": "{\"reset_all\": false, \"days_threshold\": 14}",
                 "options": {}
             },
             "name": "Reset by Age (14 Days)",
             "type": "n8n-nodes-base.httpRequest",
             "typeVersion": 4.2,
             "position": [
-                680,
+                460,
                 940
             ],
             "notesInFlow": true,
-            "notes": "POST /scrape/bulk/reset\n\nResets URLs older than X days to 'pending':\n- Body: {\"reset_all\": false, \"days_threshold\": 14}\n- Default: 14 days threshold\n- Changes status from completed/failed/processing to pending\n- Enables re-scraping old content\n\nUse when: Scheduled 2-week refresh cycle"
+            "notes": "🔄 POST /scrape/bulk/reset\n\nResets URLs older than 14 days\n\nBody:\n{\"reset_all\": false, \"days_threshold\": 14}\n\nReturns:\n- reset_count: URLs reset\n- message: Result message\n\nChange days_threshold in node settings\n\nUse when: Scheduled 2-week refresh"
         },
         {
             "parameters": {
@@ -246,64 +179,23 @@
             ]
         },
         {
-            "parameters": {},
-            "name": "Sticky Note - Reset by Status",
-            "type": "n8n-nodes-base.stickyNote",
-            "typeVersion": 1,
-            "position": [
-                460,
-                1080
-            ],
-            "width": 300,
-            "height": 140,
-            "notes": "# 🔄 Reset URLs by Status\n\nResets specific URL statuses:\n- 'completed' - Re-scrape successful URLs\n- 'failed' - Retry failed URLs\n- 'processing' - Clear stuck URLs\n\nUse when: Selective re-scraping needed"
-        },
-        {
-            "parameters": {
-                "assignments": {
-                    "assignments": [
-                        {
-                            "id": "5-1",
-                            "name": "reset_all",
-                            "value": false,
-                            "type": "boolean"
-                        },
-                        {
-                            "id": "5-2",
-                            "name": "status",
-                            "value": "completed",
-                            "type": "string"
-                        }
-                    ]
-                },
-                "options": {}
-            },
-            "name": "Set Reset Status Parameters",
-            "type": "n8n-nodes-base.set",
-            "typeVersion": 3.4,
-            "position": [
-                460,
-                1280
-            ]
-        },
-        {
             "parameters": {
                 "method": "POST",
                 "url": "https://n8n-python-scraper-production.up.railway.app/scrape/bulk/reset",
                 "sendBody": true,
                 "specifyBody": "json",
-                "jsonBody": "={{ { \"reset_all\": $json.reset_all, \"status\": $json.status } }}",
+                "jsonBody": "{\"reset_all\": false, \"status\": \"completed\"}",
                 "options": {}
             },
             "name": "Reset Completed URLs",
             "type": "n8n-nodes-base.httpRequest",
             "typeVersion": 4.2,
             "position": [
-                680,
+                460,
                 1280
             ],
             "notesInFlow": true,
-            "notes": "POST /scrape/bulk/reset\n\nResets specific URL statuses:\n- Body: {\"reset_all\": false, \"status\": \"completed\"}\n- Options: \"completed\" | \"failed\" | \"processing\"\n- Changes selected status to pending\n\nEdit 'Set Reset Status Parameters' node to change status value\n\nUse when: Selective re-scraping needed"
+            "notes": "🔄 POST /scrape/bulk/reset\n\nResets specific status URLs\n\nBody:\n{\"reset_all\": false, \"status\": \"completed\"}\n\nOptions:\n- completed\n- failed\n- processing\n\nChange status in node settings\n\nUse when: Selective re-scrape needed"
         },
         {
             "parameters": {
@@ -338,19 +230,6 @@
                 900,
                 1280
             ]
-        },
-        {
-            "parameters": {},
-            "name": "Sticky Note - Stop Bulk Scrape",
-            "type": "n8n-nodes-base.stickyNote",
-            "typeVersion": 1,
-            "position": [
-                460,
-                1420
-            ],
-            "width": 300,
-            "height": 120,
-            "notes": "# 🛑 Stop Bulk Scrape\n\nStops currently running bulk scrape:\n- Marks task as cancelled\n- Completes current batch\n- Returns summary of progress\n\nUse when: Emergency stop needed"
         },
         {
             "parameters": {
@@ -403,19 +282,6 @@
             ]
         },
         {
-            "parameters": {},
-            "name": "Sticky Note - Health Check",
-            "type": "n8n-nodes-base.stickyNote",
-            "typeVersion": 1,
-            "position": [
-                460,
-                1760
-            ],
-            "width": 300,
-            "height": 120,
-            "notes": "# ❤️ Health Check\n\nChecks API and browser status:\n- Service health\n- Browser warm state\n- Request count\n- Pending restarts\n\nUse when: Verifying service availability"
-        },
-        {
             "parameters": {
                 "method": "GET",
                 "url": "https://n8n-python-scraper-production.up.railway.app/health",
@@ -426,10 +292,10 @@
             "typeVersion": 4.2,
             "position": [
                 460,
-                1960
+                1620
             ],
             "notesInFlow": true,
-            "notes": "GET /health\n\nChecks API and browser status:\n- Service health status\n- Browser warm state (ready/not ready)\n- Total request count\n- Browser restart pending (true/false)\n\nUse when: Verifying service availability or troubleshooting"
+            "notes": "❤️ GET /health\n\nChecks API and browser status\n\nReturns:\n- status: healthy\n- browser_warm: true/false\n- request_count: Number\n- restarts_pending: true/false\n\nUse when: Verifying service availability"
         },
         {
             "parameters": {
@@ -472,92 +338,5 @@
             ]
         }
     ],
-    "connections": {
-        "Manual Trigger": {
-            "main": [
-                {
-                    "index": 0,
-                    "node": "Check Bulk Status",
-                    "type": "main"
-                },
-                {
-                    "index": 1,
-                    "node": "Start Bulk Scrape",
-                    "type": "main"
-                }
-            ]
-        },
-        "Check Bulk Status": {
-            "main": [
-                {
-                    "index": 0,
-                    "node": "Format Status Output",
-                    "type": "main"
-                }
-            ]
-        },
-        "Start Bulk Scrape": {
-            "main": [
-                {
-                    "index": 0,
-                    "node": "Format Start Output",
-                    "type": "main"
-                }
-            ]
-        },
-        "Set Reset Age Parameters": {
-            "main": [
-                {
-                    "index": 0,
-                    "node": "Reset by Age (14 Days)",
-                    "type": "main"
-                }
-            ]
-        },
-        "Reset by Age (14 Days)": {
-            "main": [
-                {
-                    "index": 0,
-                    "node": "Format Reset Output",
-                    "type": "main"
-                }
-            ]
-        },
-        "Set Reset Status Parameters": {
-            "main": [
-                {
-                    "index": 0,
-                    "node": "Reset Completed URLs",
-                    "type": "main"
-                }
-            ]
-        },
-        "Reset Completed URLs": {
-            "main": [
-                {
-                    "index": 0,
-                    "node": "Format Status Reset Output",
-                    "type": "main"
-                }
-            ]
-        },
-        "Stop Bulk Scrape": {
-            "main": [
-                {
-                    "index": 0,
-                    "node": "Format Stop Output",
-                    "type": "main"
-                }
-            ]
-        },
-        "Check API Health": {
-            "main": [
-                {
-                    "index": 0,
-                    "node": "Format Health Output",
-                    "type": "main"
-                }
-            ]
-        }
-    }
+    "connections": {}
 }
