@@ -519,8 +519,8 @@ async def scrape_bulk_urls():
                         
                         # Check if document already exists and update, or insert new
                         try:
-                            # Try to find existing document by URL
-                            existing = client.table("documents").select("*").eq("metadata->>->source", url).execute()
+                            # Try to find existing document by URL using contains filter
+                            existing = client.table("documents").select("*").contains("metadata", {"source": url}).execute()
                             if existing.data and len(existing.data) > 0:
                                 # Document exists - update it
                                 doc_id = existing.data[0]["id"]
@@ -535,7 +535,7 @@ async def scrape_bulk_urls():
                             if "duplicate" in str(e).lower() or "unique constraint" in str(e).lower():
                                 print(f"  ℹ️  {url[:50]}... (duplicate detected, finding existing)")
                                 try:
-                                    existing = client.table("documents").select("*").eq("metadata->>->source", url).execute()
+                                    existing = client.table("documents").select("*").contains("metadata", {"source": url}).execute()
                                     if existing.data and len(existing.data) > 0:
                                         doc_id = existing.data[0]["id"]
                                         client.table("documents").update(insert_data).eq("id", doc_id).execute()
