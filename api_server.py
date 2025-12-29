@@ -574,26 +574,48 @@ async def scrape_bulk_urls():
                             except Exception as e:
                                 print(f"  ⚠️  Embedding failed: {e}")
                         
-                        # Insert or update document (upsert - prevents duplicates)
-                        insert_data = {
-                            "content": content,
-                            "source": url,  # Separate column for uniqueness constraint
-                            "metadata": {
-                                "source": url,
-                                "source_type": "web_scrape",
-                                "title": result["title"],
-                                "scraped_at": datetime.utcnow().isoformat(),
-                                "updated_at": datetime.utcnow().isoformat()  # Track updates
+                        # Check if document already exists for this URL
+                        existing = client.table("documents").select("id").filter("metadata->>'source'", url).execute()
+                        
+                        if existing.data and len(existing.data) > 0:
+                            # Update existing document
+                            update_data = {
+                                "content": content,
+                                "metadata": {
+                                    "source": url,
+                                    "source_type": "web_scrape",
+                                    "title": result["title"],
+                                    "scraped_at": existing.data[0].get("metadata", {}).get("scraped_at", datetime.utcnow().isoformat()),
+                                    "updated_at": datetime.utcnow().isoformat()
+                                }
                             }
-                        }
-                        
-                        if embedding:
-                            insert_data["embedding"] = embedding
+                            if embedding:
+                                update_data["embedding"] = embedding
+                            else:
+                                update_data["metadata"]["no_embedding"] = True
+                            
+                            # Update by ID
+                            client.table("documents").update(update_data).eq("id", existing.data[0]["id"]).execute()
+                            print(f"  ✓ Updated existing document: {url[:50]}...")
                         else:
-                            insert_data["metadata"]["no_embedding"] = True
-                        
-                        # Use upsert to update existing documents instead of creating duplicates
-                        client.table("documents").upsert(insert_data, on_conflict="source").execute()
+                            # Insert new document
+                            insert_data = {
+                                "content": content,
+                                "metadata": {
+                                    "source": url,
+                                    "source_type": "web_scrape",
+                                    "title": result["title"],
+                                    "scraped_at": datetime.utcnow().isoformat(),
+                                    "updated_at": datetime.utcnow().isoformat()
+                                }
+                            }
+                            if embedding:
+                                insert_data["embedding"] = embedding
+                            else:
+                                insert_data["metadata"]["no_embedding"] = True
+                            
+                            client.table("documents").insert(insert_data).execute()
+                            print(f"  ✓ Inserted new document: {url[:50]}...")
                         
                         # Mark as completed (status only, content is in documents table)
                         client.table("url_queue").update({
