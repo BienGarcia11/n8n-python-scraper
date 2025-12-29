@@ -2,6 +2,7 @@ import asyncio
 import gc
 import os
 import re
+import uuid
 from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -385,8 +386,287 @@ async def root():
         "version": "1.0.0",
         "endpoints": {
             "POST /scrape": "Scrape URLs (batch)",
+            "POST /scrape/bulk": "Scrape all pending URLs (bulk)",
+            "GET /scrape/bulk/status": "Check bulk scrape progress",
+            "POST /scrape/bulk/stop": "Stop running bulk scrape",
+            "POST /scrape/bulk/reset": "Reset URL statuses for re-scraping",
             "GET /health": "Health check"
         }
+    }
+
+
+@app.post("/scrape/bulk")
+async def scrape_bulk_urls():
+    """Trigger bulk scraping of all pending URLs from database"""
+    global bulk_status, bulk_task
+    
+    if bulk_status["running"]:
+        return {
+            "status": "already_running",
+            "task_id": bulk_status["task_id"],
+            "message": "Bulk scraper is already running. Use GET /scrape/bulk/status to check progress.",
+            "stop_command": "POST /scrape/bulk/stop to cancel"
+        }
+    
+    supabase_url = os.getenv("SUPABASE_URL", "https://ykohyrwipxpwztptfopi.supabase.co")
+    supabase_key = os.getenv("SUPABASE_KEY")
+    openai_key = os.getenv("OPENAI_API_KEY")
+    
+    if not supabase_key:
+        raise HTTPException(status_code=500, detail="SUPABASE_KEY not configured")
+    
+    client = create_client(supabase_url, supabase_key)
+    
+    # Fetch pending URLs
+    pending_urls = []
+    batch_size = 1000
+    offset = 0
+    while len(pending_urls) < MAX_BULK_URLS:
+        result = client.table("url_queue").select("*").eq("status", "pending").range(offset, offset + batch_size - 1).execute()
+        batch = result.data if result.data else []
+        if not batch:
+            break
+        pending_urls.extend(batch)
+        offset += batch_size
+        if len(pending_urls) >= MAX_BULK_URLS:
+            pending_urls = pending_urls[:MAX_BULK_URLS]
+            break
+    
+    if not pending_urls:
+        return {
+            "task_id": str(uuid.uuid4()),
+            "status": "completed",
+            "pending_count": 0,
+            "message": "No pending URLs to scrape"
+        }
+    
+    task_id = str(uuid.uuid4())
+    pending_count = len(pending_urls)
+    
+    bulk_status.update({
+        "running": True,
+        "task_id": task_id,
+        "started_at": datetime.utcnow().isoformat(),
+        "total_urls": pending_count,
+        "processed": 0,
+        "failed": 0,
+        "cancelled": False
+    })
+    
+    async def run_bulk_task():
+        nonlocal client, openai_key
+        context = await get_browser_context()
+        batch_size = 3
+        urls = [u["url"] for u in pending_urls]
+        batches = [urls[i:i + batch_size] for i in range(0, len(urls), batch_size)]
+        total_successful = 0
+        total_failed = 0
+        
+        print(f"\n{'='*60}")
+        print(f"BULK SCRAPE TASK: {task_id}")
+        print(f"Pending URLs: {pending_count}")
+        
+        for batch_num, batch in enumerate(batches, 1):
+            if bulk_status["cancelled"]:
+                print(f"\n⛔ BULK SCRAPE CANCELLED by user")
+                break
+            
+            print(f"\nBATCH {batch_num}/{len(batches)}: {len(batch)} URLs")
+            
+            for url in batch:
+                try:
+                    client.table("url_queue").update({"status": "processing"}).eq("url", url).execute()
+                except Exception as e:
+                    print(f"  ⚠️  Failed to mark {url} as processing: {e}")
+            
+            tasks = [scrape_single_url(context, url, semaphore) for url in batch]
+            results = await asyncio.gather(*tasks)
+            
+            for result in results:
+                if not result:
+                    continue
+                
+                url = result["url"]
+                
+                if result["status"] == "success":
+                    try:
+                        content = result["content"]
+                        embedding = None
+                        
+                        if openai_key:
+                            try:
+                                openai_client = OpenAI(api_key=openai_key)
+                                response = openai_client.embeddings.create(
+                                    model=EMBEDDING_MODEL,
+                                    input=content[:8191]
+                                )
+                                embedding = response.data[0].embedding
+                            except Exception as e:
+                                print(f"  ⚠️  Embedding failed: {e}")
+                        
+                        insert_data = {
+                            "content": content,
+                            "metadata": {
+                                "source": url,
+                                "source_type": "web_scrape",
+                                "title": result["title"],
+                                "scraped_at": datetime.utcnow().isoformat()
+                            }
+                        }
+                        
+                        if embedding:
+                            insert_data["embedding"] = embedding
+                        
+                        try:
+                            client.table("documents").insert(insert_data).execute()
+                        except Exception as insert_error:
+                            if "duplicate" not in str(insert_error).lower():
+                                raise
+                        
+                        client.table("url_queue").update({"status": "completed"}).eq("url", url).execute()
+                        total_successful += 1
+                        bulk_status["processed"] += 1
+                        print(f"  ✓ {url[:50]}...")
+                        
+                    except Exception as e:
+                        print(f"  ❌ Failed to process {url}: {e}")
+                        total_failed += 1
+                        bulk_status["failed"] += 1
+                        client.table("url_queue").update({"status": "failed"}).eq("url", url).execute()
+                else:
+                    total_failed += 1
+                    bulk_status["failed"] += 1
+                    client.table("url_queue").update({"status": "failed"}).eq("url", url).execute()
+            
+            print(f"Batch {batch_num} complete")
+        
+        if not bulk_status["cancelled"]:
+            print(f"\n{'='*60}")
+            print(f"BULK SCRAPE COMPLETE: {task_id}")
+        
+        bulk_status["running"] = False
+        bulk_status["task_id"] = None
+    
+    bulk_task = asyncio.create_task(run_bulk_task())
+    
+    return {
+        "task_id": task_id,
+        "status": "started",
+        "pending_count": pending_count,
+        "message": f"Started bulk scraping {pending_count} URLs"
+    }
+
+
+@app.get("/scrape/bulk/status")
+async def bulk_status_check():
+    """Get current bulk scraping status"""
+    if not bulk_status["running"]:
+        return {
+            "running": False,
+            "message": "No bulk scrape task is currently running"
+        }
+    
+    progress = (bulk_status["processed"] + bulk_status["failed"]) / bulk_status["total_urls"] * 100 if bulk_status["total_urls"] > 0 else 0
+    
+    return {
+        "running": True,
+        "task_id": bulk_status["task_id"],
+        "started_at": bulk_status["started_at"],
+        "total_urls": bulk_status["total_urls"],
+        "processed": bulk_status["processed"],
+        "failed": bulk_status["failed"],
+        "progress": round(progress, 1),
+        "cancelled": bulk_status["cancelled"]
+    }
+
+
+@app.post("/scrape/bulk/reset")
+async def reset_bulk_urls(request: Optional[dict] = None):
+    """Reset URL statuses to allow re-scraping"""
+    supabase_url = os.getenv("SUPABASE_URL", "https://ykohyrwipxpwztptfopi.supabase.co")
+    supabase_key = os.getenv("SUPABASE_KEY")
+    
+    if not supabase_key:
+        raise HTTPException(status_code=500, detail="SUPABASE_KEY not configured")
+    
+    body = request if request else {}
+    reset_all = body.get("reset_all", False)
+    status = body.get("status")
+    days_threshold = body.get("days_threshold")
+    
+    client = create_client(supabase_url, supabase_key)
+    
+    if reset_all:
+        result = client.table("url_queue").update({"status": "pending"}).execute()
+        reset_count = len(result.data) if result.data else 0
+        return {
+            "status": "success",
+            "reset_count": reset_count,
+            "action": "reset_all",
+            "message": f"Reset {reset_count} URLs to pending status"
+        }
+    
+    elif status:
+        if status not in ["completed", "failed", "processing"]:
+            raise HTTPException(status_code=400, detail=f"Invalid status '{status}'")
+        
+        result = client.table("url_queue").update({"status": "pending"}).eq("status", status).execute()
+        reset_count = len(result.data) if result.data else 0
+        return {
+            "status": "success",
+            "reset_count": reset_count,
+            "action": f"reset_status_{status}",
+            "message": f"Reset {reset_count} URLs from {status} to pending"
+        }
+    
+    elif days_threshold:
+        try:
+            result = client.table("url_queue").update({"status": "pending"}).lt("updated_at", datetime.utcnow() - timedelta(days=days_threshold)).execute()
+            reset_count = len(result.data) if result.data else 0
+            return {
+                "status": "success",
+                "reset_count": reset_count,
+                "action": f"reset_older_than_{days_threshold}_days",
+                "message": f"Reset {reset_count} URLs older than {days_threshold} days to pending"
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to reset by age: {str(e)}")
+    
+    else:
+        raise HTTPException(status_code=400, detail="Must specify one of: reset_all, status, or days_threshold")
+
+
+@app.post("/scrape/bulk/stop")
+async def stop_bulk_scrape():
+    """Stop currently running bulk scrape task"""
+    global bulk_status, bulk_task
+    
+    if not bulk_status["running"]:
+        return {
+            "status": "not_running",
+            "message": "No bulk scrape task is currently running"
+        }
+    
+    bulk_status["cancelled"] = True
+    
+    task_id = bulk_status["task_id"]
+    summary = {
+        "task_id": task_id,
+        "total_urls": bulk_status["total_urls"],
+        "processed": bulk_status["processed"],
+        "failed": bulk_status["failed"],
+        "progress": round((bulk_status["processed"] + bulk_status["failed"]) / bulk_status["total_urls"] * 100, 1) if bulk_status["total_urls"] > 0 else 0
+    }
+    
+    try:
+        await asyncio.wait_for(bulk_task, timeout=5.0)
+    except asyncio.TimeoutError:
+        pass
+    
+    return {
+        "status": "stopped",
+        "message": "Bulk scraper stopped after current batch completes",
+        "summary": summary
     }
 
 
