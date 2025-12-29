@@ -1,6 +1,7 @@
 import asyncio
 import gc
 import os
+import re
 import traceback
 import uuid
 from datetime import datetime, timedelta
@@ -68,7 +69,6 @@ def extract_content(html_content):
         return extracted_strict
     
     # Strategy 3: Extract only <article>, <main>, or specific content areas
-    import re
     from html import unescape
     
     # Try to find article content by HTML structure
@@ -442,7 +442,7 @@ async def scrape_urls(request: ScrapeRequest):
     if failed_urls:
         print(f"\n⚠️ Failed URLs (will be retried):")
         for url in failed_urls:
-            error_info = next(r["error"] for r in results if r["url"] == url)
+            error_info = next((r["error"] for r in results if r["url"] == url), "Unknown error")
             print(f"   - {url}")
             print(f"     Error: {error_info}")
     
@@ -667,9 +667,8 @@ async def scrape_bulk_urls():
                             except Exception as e:
                                 print(f"  ⚠️  Embedding failed: {e}")
                         
-                        # Insert document directly - let Supabase handle uniqueness
-                        # Note: To prevent duplicates, add a unique constraint in Supabase:
-                        # ALTER TABLE documents ADD CONSTRAINT documents_source_unique UNIQUE ((metadata->>'source'));
+                        # Insert document - simpler approach without duplicate handling
+                        # Just insert and let Supabase handle it
                         insert_data = {
                             "content": content,
                             "metadata": {
@@ -686,48 +685,16 @@ async def scrape_bulk_urls():
                         else:
                             insert_data["metadata"]["no_embedding"] = True
                         
-                        # Try insert - will fail if unique constraint exists
+                        # Try insert - if duplicate error, just log and continue
                         try:
                             client.table("documents").insert(insert_data).execute()
-                            print(f"  ✓ Inserted new document: {url[:50]}...")
+                            print(f"  ✓ Inserted document: {url[:50]}...")
                         except Exception as insert_error:
-                            # Check if error is about duplicate
-                            if "duplicate" in str(insert_error).lower() or "unique" in str(insert_error).lower() or "23505" in str(insert_error):
-                                # Document exists, update it
-                                # First fetch the existing document
-                                existing = client.table("documents").select("*").execute()
-                                if existing.data:
-                                    # Find matching document by source
-                                    match = None
-                                    for doc in existing.data:
-                                        if doc.get("metadata", {}).get("source") == url:
-                                            match = doc
-                                            break
-                                    
-                                    if match:
-                                        update_data = {
-                                            "content": content,
-                                            "metadata": {
-                                                "source": url,
-                                                "source_type": "web_scrape",
-                                                "title": result["title"],
-                                                "scraped_at": match.get("metadata", {}).get("scraped_at", datetime.utcnow().isoformat()),
-                                                "updated_at": datetime.utcnow().isoformat()
-                                            }
-                                        }
-                                        if embedding:
-                                            update_data["embedding"] = embedding
-                                        else:
-                                            update_data["metadata"]["no_embedding"] = True
-                                        
-                                        client.table("documents").update(update_data).eq("id", match["id"]).execute()
-                                        print(f"  ✓ Updated existing document: {url[:50]}...")
-                                    else:
-                                        print(f"  ⚠️  Could not find existing document: {url[:50]}...")
-                                        # Re-insert anyway
-                                        client.table("documents").insert(insert_data).execute()
+                            if "duplicate" in str(insert_error).lower() or "unique" in str(insert_error).lower():
+                                print(f"  ⚠️  Duplicate document skipped: {url[:50]}...")
                             else:
                                 # Different error, re-raise
+                                print(f"  ❌ Database error: {insert_error}")
                                 raise insert_error
                         
                         # Mark as completed (status only, content is in documents table)
