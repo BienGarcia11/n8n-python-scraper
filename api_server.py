@@ -40,73 +40,76 @@ class ScrapeResponse(BaseModel):
     failed: int
 
 
-def extract_content(html_content):
-    """Extract main content using multiple strategies"""
+async def extract_content(page):
+    """Extract main content from Playwright page using direct DOM queries"""
     
-    # Strategy 1: Try trafilatura with multiple configurations
-    extracted = trafilatura.extract(
-        html_content,
-        include_links=True,
-        include_formatting=True,
-        include_tables=True,
-        no_fallback=False,
-    )
+    # Try to find main content element
+    try:
+        # Strategy 1: Look for <main> or <article> elements
+        main_content = await page.query_selector("main") or await page.query_selector("article")
+        
+        if main_content:
+            # Get text from main/article element
+            text = await main_content.text_content()
+            if text and len(text.strip()) > 100:
+                print(f"  ✓ Extracted from {'main' if await page.query_selector('main') else 'article'} tag")
+                return text.strip()
+    except Exception as e:
+        print(f"  ⚠️  Main/article selector failed: {e}")
     
-    # If trafilatura extracted meaningful content, use it
-    if extracted and len(extracted.strip()) > 500:
-        return extracted
-    
-    # Strategy 2: Try trafilatura with fallback disabled (stricter)
-    extracted_strict = trafilatura.extract(
-        html_content,
-        include_links=False,
-        include_formatting=True,
-        include_tables=False,
-        no_fallback=True,
-    )
-    
-    if extracted_strict and len(extracted_strict.strip()) > 500:
-        return extracted_strict
-    
-    # Strategy 3: Extract only <article>, <main>, or specific content areas
-    from html import unescape
-    
-    # Try to find article content by HTML structure
-    article_patterns = [
-        r'<article[^>]*>(.*?)</article>',
-        r'<main[^>]*>(.*?)</main>',
-        r'<div[^>]*class="[^"]*article[^"]*"[^>]*>(.*?)</div>',
-        r'<div[^>]*class="[^"]*content[^"]*"[^>]*>(.*?)</div>',
+    # Strategy 2: Look for common content container patterns
+    content_selectors = [
+        'div[class*="content"]',
+        'div[class*="article"]',
+        'div[class*="article-body"]',
+        'div[class*="main-content"]',
+        '[data-testid*="content"]',
+        '[data-testid*="article"]',
     ]
     
-    for pattern in article_patterns:
-        matches = re.findall(pattern, html_content, re.DOTALL | re.IGNORECASE)
-        if matches:
-            best_match = max(matches, key=len)
-            if len(best_match.strip()) > 500:
-                # Convert HTML to text
-                h = html2text.HTML2Text()
-                h.ignore_links = False
-                h.ignore_images = True
-                h.ignore_emphasis = False
-                h.body_width = 0
-                h.ignore_tables = False
-                article_text = h.handle(best_match)
-                return clean_content(article_text)
+    for selector in content_selectors:
+        try:
+            element = await page.query_selector(selector)
+            if element:
+                text = await element.text_content()
+                if text and len(text.strip()) > 500:
+                    print(f"  ✓ Extracted from selector: {selector}")
+                    return text.strip()
+        except Exception:
+            continue
     
-    # Strategy 4: Fallback to html2text with aggressive cleanup
-    h = html2text.HTML2Text()
-    h.ignore_links = False
-    h.ignore_images = True
-    h.ignore_emphasis = False
-    h.body_width = 0
-    h.ignore_tables = False
-    h.skip_internal_links = True
+    # Strategy 3: Fallback - get all text from body but exclude obvious junk
+    try:
+        body_text = await page.evaluate('''
+            () => {
+                // Remove common junk elements
+                const selectorsToRemove = [
+                    'nav', 'header', 'footer', 'aside', 
+                    '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]',
+                    'script', 'style', 'noscript'
+                ];
+                
+                selectorsToRemove.forEach(sel => {
+                    document.querySelectorAll(sel).forEach(el => el.remove());
+                });
+                
+                // Get body text
+                return document.body.innerText;
+            }
+        ''')
+        
+        if body_text and len(body_text.strip()) > 200:
+            print(f"  ✓ Extracted from body (fallback)")
+            return body_text.strip()
+    except Exception as e:
+        print(f"  ⚠️  Body extraction failed: {e}")
     
-    fallback_content = h.handle(html_content)
-    
-    # Clean and filter content
-    return clean_content(fallback_content)
+    # Strategy 4: Last resort - raw page text
+    try:
+        text = await page.text_content()
+        return text.strip()
+    except Exception:
+        return ""
 
 
 def clean_content(text):
@@ -193,21 +196,19 @@ async def scrape_single_url(context, url, semaphore, max_retries=3):
                 print(f"Scraping: {url} (attempt {attempt + 1}/{max_retries})")
                 await page.goto(url, timeout=60000, wait_until="domcontentloaded")
                 
-                # Get fully rendered HTML (after JS execution) with timeout
-                html_content = await asyncio.wait_for(page.content(), timeout=30000)
+                # Get title
                 title = await asyncio.wait_for(page.title(), timeout=5000)
                 
-                # Extract main content using trafilatura
-                content = extract_content(html_content)
+                # Extract main content using Playwright page
+                content = await extract_content(page)
                 
                 # Validate we got actual content (not just junk)
                 if not content or len(content.strip()) < 50:
                     raise ValueError("Extracted content too short (< 50 chars)")
                 
                 # Log content size for debugging
-                original_size = len(html_content)
                 extracted_size = len(content) if content else 0
-                print(f"  ✓ Success: {original_size:,} chars -> {extracted_size:,} chars")
+                print(f"  ✓ Success: {extracted_size:,} chars extracted")
                 
                 return {
                     "url": url,
