@@ -517,11 +517,25 @@ async def scrape_bulk_urls():
                         if embedding:
                             insert_data["embedding"] = embedding
                         
+                        # Use upsert to update existing documents instead of failing
                         try:
-                            client.table("documents").insert(insert_data).execute()
-                        except Exception as insert_error:
-                            if "duplicate" not in str(insert_error).lower():
-                                raise
+                            client.table("documents").upsert(
+                                insert_data,
+                                on_conflict="metadata->source"  # Match on URL field in metadata
+                            ).execute()
+                            print(f"  ✓ {url[:50]}... (upserted)")
+                        except Exception as e:
+                            # Check if it's a duplicate constraint violation (already exists)
+                            if "duplicate" in str(e).lower():
+                                print(f"  ℹ️  {url[:50]}... (already exists, updating)")
+                                # Try to update the existing document instead
+                                try:
+                                    client.table("documents").update(insert_data).eq("metadata->>->source", url).execute()
+                                    print(f"  ✓ {url[:50]}... (updated)")
+                                except Exception as update_error:
+                                    print(f"  ❌ Failed to update {url}: {update_error}")
+                            else:
+                                print(f"  ❌ Failed to upsert {url}: {e}")
                         
                         client.table("url_queue").update({"status": "completed"}).eq("url", url).execute()
                         total_successful += 1
