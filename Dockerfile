@@ -50,7 +50,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Install Playwright browsers
 RUN playwright install chromium
 
-# Copy application code (v2 - fix for 10000 URL limit)
+# Copy application code (v3 - timestamp to force rebuild)
+ARG BUILD_TIMESTAMP
+RUN echo "Build timestamp: ${BUILD_TIMESTAMP}"
 COPY api_server.py .
 
 # Expose port
