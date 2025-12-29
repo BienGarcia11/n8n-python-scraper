@@ -735,7 +735,7 @@ async def reset_bulk_urls(request: Optional[dict] = None):
     elif status:
         # Reset specific status (completed/failed/processing)
         if status not in ["completed", "failed", "processing"]:
-        raise HTTPException(
+            raise HTTPException(
                 status_code=400, 
                 detail=f"Invalid status '{status}'. Must be 'completed', 'failed', or 'processing'"
             )
@@ -754,7 +754,7 @@ async def reset_bulk_urls(request: Optional[dict] = None):
         try:
             result = client.table("url_queue").update({"status": "pending"}).lt("updated_at", datetime.utcnow() - timedelta(days=days_threshold)).execute()
             reset_count = len(result.data) if result.data else 0
-        return {
+            return {
                 "status": "success",
                 "reset_count": reset_count,
                 "action": f"reset_older_than_{days_threshold}_days",
