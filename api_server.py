@@ -40,9 +40,9 @@ class ScrapeResponse(BaseModel):
 
 
 def extract_content(html_content):
-    """Extract main content using trafilatura, fallback to html2text"""
+    """Extract main content using multiple strategies"""
     
-    # Try trafilatura first - it handles most sites well
+    # Strategy 1: Try trafilatura with multiple configurations
     extracted = trafilatura.extract(
         html_content,
         include_links=True,
@@ -52,35 +52,128 @@ def extract_content(html_content):
     )
     
     # If trafilatura extracted meaningful content, use it
-    if extracted and len(extracted.strip()) > 200:
+    if extracted and len(extracted.strip()) > 500:
         return extracted
     
-    # Fallback to html2text for pages trafilatura can't parse
+    # Strategy 2: Try trafilatura with fallback disabled (stricter)
+    extracted_strict = trafilatura.extract(
+        html_content,
+        include_links=False,
+        include_formatting=True,
+        include_tables=False,
+        no_fallback=True,
+    )
+    
+    if extracted_strict and len(extracted_strict.strip()) > 500:
+        return extracted_strict
+    
+    # Strategy 3: Extract only <article>, <main>, or specific content areas
+    import re
+    from html import unescape
+    
+    # Try to find article content by HTML structure
+    article_patterns = [
+        r'<article[^>]*>(.*?)</article>',
+        r'<main[^>]*>(.*?)</main>',
+        r'<div[^>]*class="[^"]*article[^"]*"[^>]*>(.*?)</div>',
+        r'<div[^>]*class="[^"]*content[^"]*"[^>]*>(.*?)</div>',
+    ]
+    
+    for pattern in article_patterns:
+        matches = re.findall(pattern, html_content, re.DOTALL | re.IGNORECASE)
+        if matches:
+            best_match = max(matches, key=len)
+            if len(best_match.strip()) > 500:
+                # Convert HTML to text
+                h = html2text.HTML2Text()
+                h.ignore_links = False
+                h.ignore_images = True
+                h.ignore_emphasis = False
+                h.body_width = 0
+                h.ignore_tables = False
+                article_text = h.handle(best_match)
+                return clean_content(article_text)
+    
+    # Strategy 4: Fallback to html2text with aggressive cleanup
     h = html2text.HTML2Text()
     h.ignore_links = False
     h.ignore_images = True
     h.ignore_emphasis = False
-    h.body_width = 0  # Don't wrap lines
+    h.body_width = 0
+    h.ignore_tables = False
+    h.skip_internal_links = True
     
     fallback_content = h.handle(html_content)
     
-    # Basic cleanup for fallback
-    lines = fallback_content.split('\n')
+    # Clean and filter content
+    return clean_content(fallback_content)
+
+
+def clean_content(text):
+    """Clean extracted content by removing navigation, footers, etc."""
+    lines = text.split('\n')
     cleaned_lines = []
+    
+    # Track if we're in the main content section
+    in_content = False
+    content_count = 0
+    
+    skip_patterns = [
+        'Skip to', 'Cookie', 'Accept all', 'Manage cookies',
+        'Log in', 'Sign up', 'Sign in', 'Contact support',
+        'Try.*free', 'Opens in new window', 'copyright', '©',
+        'All rights reserved', 'Privacy', 'Legal', 'Terms',
+        'Community guidelines', 'status page',
+        'Select your region', 'New Zealand', 'Australia',
+        'United States', 'Hong Kong', 'Malaysia', 'United Kingdom',
+        'Canada', 'Singapore', 'South Africa', 'Rest of world',
+        'Support Topics', 'topiccatalog',
+    ]
+    
     for line in lines:
         stripped = line.strip()
-        # Skip common junk patterns
-        if stripped and not any([
-            stripped.startswith('Skip to'),
-            stripped.startswith('Cookie'),
-            stripped.startswith('Accept all'),
-            'privacy policy' in stripped.lower(),
-            'terms of service' in stripped.lower(),
-            len(stripped) < 3,
-        ]):
-            cleaned_lines.append(line)
+        
+        # Skip empty lines
+        if not stripped:
+            continue
+        
+        # Skip navigation/footer patterns
+        if any(re.search(pattern, stripped, re.IGNORECASE) for pattern in skip_patterns):
+            continue
+        
+        # Skip very short lines (likely nav items)
+        if len(stripped) < 10 and not in_content:
+            continue
+        
+        # Skip lines that are just punctuation or symbols
+        if re.match(r'^[\s\*\-•\[\]()]+$', stripped):
+            continue
+        
+        # Skip lines that look like URLs or paths
+        if re.match(r'^(/\w+|https?://|www\.)', stripped):
+            continue
+        
+        # Skip lines with lots of special characters (likely junk)
+        special_chars = sum(1 for c in stripped if not c.isalnum() and c not in ' .,!?-')
+        if len(stripped) > 0 and special_chars / len(stripped) > 0.5:
+            continue
+        
+        # Mark as content once we see substantial text
+        if len(stripped) > 30:
+            in_content = True
+            content_count += 1
+        
+        # Add line if it's substantial or we're in content area
+        if len(stripped) >= 20 or (in_content and len(stripped) >= 10):
+            cleaned_lines.append(stripped)
     
-    return '\n'.join(cleaned_lines)
+    result = '\n'.join(cleaned_lines)
+    
+    # Only return if we have meaningful content
+    if len(result.strip()) > 300:
+        return result
+    
+    return ""
 
 
 async def scrape_single_url(context, url, semaphore, max_retries=3):
@@ -574,48 +667,68 @@ async def scrape_bulk_urls():
                             except Exception as e:
                                 print(f"  ⚠️  Embedding failed: {e}")
                         
-                        # Check if document already exists for this URL
-                        existing = client.table("documents").select("id").filter("metadata->>'source'", url).execute()
+                        # Insert document directly - let Supabase handle uniqueness
+                        # Note: To prevent duplicates, add a unique constraint in Supabase:
+                        # ALTER TABLE documents ADD CONSTRAINT documents_source_unique UNIQUE ((metadata->>'source'));
+                        insert_data = {
+                            "content": content,
+                            "metadata": {
+                                "source": url,
+                                "source_type": "web_scrape",
+                                "title": result["title"],
+                                "scraped_at": datetime.utcnow().isoformat(),
+                                "updated_at": datetime.utcnow().isoformat()
+                            }
+                        }
                         
-                        if existing.data and len(existing.data) > 0:
-                            # Update existing document
-                            update_data = {
-                                "content": content,
-                                "metadata": {
-                                    "source": url,
-                                    "source_type": "web_scrape",
-                                    "title": result["title"],
-                                    "scraped_at": existing.data[0].get("metadata", {}).get("scraped_at", datetime.utcnow().isoformat()),
-                                    "updated_at": datetime.utcnow().isoformat()
-                                }
-                            }
-                            if embedding:
-                                update_data["embedding"] = embedding
-                            else:
-                                update_data["metadata"]["no_embedding"] = True
-                            
-                            # Update by ID
-                            client.table("documents").update(update_data).eq("id", existing.data[0]["id"]).execute()
-                            print(f"  ✓ Updated existing document: {url[:50]}...")
+                        if embedding:
+                            insert_data["embedding"] = embedding
                         else:
-                            # Insert new document
-                            insert_data = {
-                                "content": content,
-                                "metadata": {
-                                    "source": url,
-                                    "source_type": "web_scrape",
-                                    "title": result["title"],
-                                    "scraped_at": datetime.utcnow().isoformat(),
-                                    "updated_at": datetime.utcnow().isoformat()
-                                }
-                            }
-                            if embedding:
-                                insert_data["embedding"] = embedding
-                            else:
-                                insert_data["metadata"]["no_embedding"] = True
-                            
+                            insert_data["metadata"]["no_embedding"] = True
+                        
+                        # Try insert - will fail if unique constraint exists
+                        try:
                             client.table("documents").insert(insert_data).execute()
                             print(f"  ✓ Inserted new document: {url[:50]}...")
+                        except Exception as insert_error:
+                            # Check if error is about duplicate
+                            if "duplicate" in str(insert_error).lower() or "unique" in str(insert_error).lower() or "23505" in str(insert_error):
+                                # Document exists, update it
+                                # First fetch the existing document
+                                existing = client.table("documents").select("*").execute()
+                                if existing.data:
+                                    # Find matching document by source
+                                    match = None
+                                    for doc in existing.data:
+                                        if doc.get("metadata", {}).get("source") == url:
+                                            match = doc
+                                            break
+                                    
+                                    if match:
+                                        update_data = {
+                                            "content": content,
+                                            "metadata": {
+                                                "source": url,
+                                                "source_type": "web_scrape",
+                                                "title": result["title"],
+                                                "scraped_at": match.get("metadata", {}).get("scraped_at", datetime.utcnow().isoformat()),
+                                                "updated_at": datetime.utcnow().isoformat()
+                                            }
+                                        }
+                                        if embedding:
+                                            update_data["embedding"] = embedding
+                                        else:
+                                            update_data["metadata"]["no_embedding"] = True
+                                        
+                                        client.table("documents").update(update_data).eq("id", match["id"]).execute()
+                                        print(f"  ✓ Updated existing document: {url[:50]}...")
+                                    else:
+                                        print(f"  ⚠️  Could not find existing document: {url[:50]}...")
+                                        # Re-insert anyway
+                                        client.table("documents").insert(insert_data).execute()
+                            else:
+                                # Different error, re-raise
+                                raise insert_error
                         
                         # Mark as completed (status only, content is in documents table)
                         client.table("url_queue").update({
