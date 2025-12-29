@@ -118,16 +118,14 @@ def clean_content(text):
     in_content = False
     content_count = 0
     
+    # Only skip the most obvious junk - don't be too aggressive
     skip_patterns = [
-        'Skip to', 'Cookie', 'Accept all', 'Manage cookies',
-        'Log in', 'Sign up', 'Sign in', 'Contact support',
-        'Try.*free', 'Opens in new window', 'copyright', '©',
-        'All rights reserved', 'Privacy', 'Legal', 'Terms',
-        'Community guidelines', 'status page',
-        'Select your region', 'New Zealand', 'Australia',
-        'United States', 'Hong Kong', 'Malaysia', 'United Kingdom',
-        'Canada', 'Singapore', 'South Africa', 'Rest of world',
-        'Support Topics', 'topiccatalog',
+        '^Skip to', '^Cookie settings', '^Accept all', '^Manage cookies',
+        '^Log in$', '^Sign up$', '^Sign in$', '^Contact support$',
+        '^copyright', '^©', '^All rights reserved',
+        '^Privacy policy$', '^Legal$', '^Terms',
+        '^Community guidelines$', '^status page$',
+        '^Select your region$',
     ]
     
     for line in lines:
@@ -137,25 +135,25 @@ def clean_content(text):
         if not stripped:
             continue
         
-        # Skip navigation/footer patterns
+        # Skip navigation/footer patterns (exact matches only, more lenient)
         if any(re.search(pattern, stripped, re.IGNORECASE) for pattern in skip_patterns):
             continue
         
-        # Skip very short lines (likely nav items)
-        if len(stripped) < 10 and not in_content:
+        # Skip very short lines that are likely navigation
+        if len(stripped) < 5 and not in_content:
             continue
         
         # Skip lines that are just punctuation or symbols
         if re.match(r'^[\s\*\-•\[\]()]+$', stripped):
             continue
         
-        # Skip lines that look like URLs or paths
-        if re.match(r'^(/\w+|https?://|www\.)', stripped):
+        # Skip lines that look like URLs/paths (start with / or http)
+        if re.match(r'^/\w+$', stripped) or re.match(r'^https?://', stripped):
             continue
         
-        # Skip lines with lots of special characters (likely junk)
+        # Skip lines with too many special characters (likely junk)
         special_chars = sum(1 for c in stripped if not c.isalnum() and c not in ' .,!?-')
-        if len(stripped) > 0 and special_chars / len(stripped) > 0.5:
+        if len(stripped) > 10 and special_chars / len(stripped) > 0.7:
             continue
         
         # Mark as content once we see substantial text
@@ -163,14 +161,14 @@ def clean_content(text):
             in_content = True
             content_count += 1
         
-        # Add line if it's substantial or we're in content area
-        if len(stripped) >= 20 or (in_content and len(stripped) >= 10):
+        # Keep most lines once we're in content area
+        if in_content or len(stripped) >= 10:
             cleaned_lines.append(stripped)
     
     result = '\n'.join(cleaned_lines)
     
-    # Only return if we have meaningful content
-    if len(result.strip()) > 300:
+    # Only return if we have meaningful content (reduced threshold)
+    if len(result.strip()) > 100:
         return result
     
     return ""
