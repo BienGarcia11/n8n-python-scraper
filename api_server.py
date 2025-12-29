@@ -3,7 +3,7 @@ import gc
 import os
 import traceback
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
@@ -419,6 +419,7 @@ async def root():
             "POST /scrape/bulk": "Scrape all pending URLs (bulk)",
             "GET /scrape/bulk/status": "Check bulk scrape progress",
             "POST /scrape/bulk/stop": "Stop running bulk scrape",
+            "POST /scrape/bulk/reset": "Reset URL statuses for re-scraping",
             "GET /health": "Health check"
         },
         "safety_limits": {
@@ -675,6 +676,101 @@ async def bulk_status_check():
         "cancelled": bulk_status["cancelled"],
         "stop_command": "POST /scrape/bulk/stop to cancel"
     }
+
+
+@app.post("/scrape/bulk/reset")
+async def reset_bulk_urls(request: Optional[dict] = None):
+    """
+    Reset URL statuses to allow re-scraping
+    
+    This endpoint allows flexible URL status resets for maintenance.
+    
+    **Options:**
+    - reset_all: true/false - Reset ALL URLs to pending
+    - status: "completed"/"failed"/"processing" - Reset specific status  
+    - days_threshold: Number of days (reset URLs older than this)
+    
+    **Examples:**
+    ```json
+    // Reset all URLs older than 14 days
+    {"reset_all": false, "days_threshold": 14}
+    
+    // Reset all "completed" URLs
+    {"reset_all": false, "status": "completed"}
+    
+    // Reset ALL URLs regardless of age or status
+    {"reset_all": true}
+    ```
+    
+    Returns:
+    - reset_count: Number of URLs reset
+    - details: Which statuses were affected
+    """
+    
+    supabase_url = os.getenv("SUPABASE_URL", "https://ykohyrwipxpwztptfopi.supabase.co")
+    supabase_key = os.getenv("SUPABASE_KEY")
+    
+    if not supabase_key:
+        raise HTTPException(status_code=500, detail="SUPABASE_KEY not configured")
+    
+    # Parse request body
+    body = request if request else {}
+    reset_all = body.get("reset_all", False)
+    status = body.get("status")
+    days_threshold = body.get("days_threshold")
+    
+    client = create_client(supabase_url, supabase_key)
+    
+    if reset_all:
+        # Reset ALL URLs to pending
+        result = client.table("url_queue").update({"status": "pending"}).execute()
+        reset_count = len(result.data) if result.data else 0
+        return {
+            "status": "success",
+            "reset_count": reset_count,
+            "action": "reset_all",
+            "message": f"Reset {reset_count} URLs to pending status"
+        }
+    
+    elif status:
+        # Reset specific status (completed/failed/processing)
+        if status not in ["completed", "failed", "processing"]:
+        raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid status '{status}'. Must be 'completed', 'failed', or 'processing'"
+            )
+        
+        result = client.table("url_queue").update({"status": "pending"}).eq("status", status).execute()
+        reset_count = len(result.data) if result.data else 0
+        return {
+            "status": "success",
+            "reset_count": reset_count,
+            "action": f"reset_status_{status}",
+            "message": f"Reset {reset_count} URLs from {status} to pending"
+        }
+    
+    elif days_threshold:
+        # Reset URLs older than X days (by inserted_at or updated_at)
+        try:
+            result = client.table("url_queue").update({"status": "pending"}).lt("updated_at", datetime.utcnow() - timedelta(days=days_threshold)).execute()
+            reset_count = len(result.data) if result.data else 0
+        return {
+                "status": "success",
+                "reset_count": reset_count,
+                "action": f"reset_older_than_{days_threshold}_days",
+                "message": f"Reset {reset_count} URLs older than {days_threshold} days to pending"
+            }
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Failed to reset by age: {str(e)}"
+            )
+    
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Must specify one of: reset_all, status, or days_threshold"
+        )
 
 
 @app.post("/scrape/bulk/stop")

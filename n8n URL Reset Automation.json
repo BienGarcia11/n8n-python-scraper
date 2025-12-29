@@ -1,0 +1,249 @@
+{
+    "name": "URL Queue Reset Automation",
+    "nodes": [
+        {
+            "parameters": {},
+            "id": "trigger-schedule",
+            "name": "Schedule Trigger (Every 2 Weeks)",
+            "type": "n8n-nodes-base.scheduleTrigger",
+            "typeVersion": 1.2,
+            "position": [
+                250,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "=https://n8n-python-scraper-production.up.railway.app/scrape/bulk/reset",
+                "authentication": "genericCredentialType",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{ {\"reset_all\": false, \"days_threshold\": 14} }}",
+                "options": {}
+            },
+            "id": "reset-api",
+            "name": "Call Reset API",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                450,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "values": {
+                    "string": [
+                        {
+                            "name": "Completed",
+                            "value": "completed"
+                        },
+                        {
+                            "name": "Failed",
+                            "value": "failed"
+                        },
+                        {
+                            "name": "Processing",
+                            "value": "processing"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "select-status",
+            "name": "Select Status to Reset",
+            "type": "n8n-nodes-base.dropDown",
+            "typeVersion": 3,
+            "position": [
+                650,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "1-1",
+                            "leftValue": "={{ $json.status }}",
+                            "rightValue": "completed",
+                            "operator": {
+                                "type": "string",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "check-status",
+            "name": "Check Status",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2.1,
+            "position": [
+                850,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "=https://n8n-python-scraper-production.up.railway.app/scrape/bulk/reset",
+                "authentication": "genericCredentialType",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{ {\"reset_all\": false, \"status\": \"{{ $json.status }}\"} }}",
+                "options": {}
+            },
+            "id": "reset-specific",
+            "name": "Reset Specific Status",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1050,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "=https://n8n-python-scraper-production.up.railway.app/scrape/bulk/reset",
+                "authentication": "genericCredentialType",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{ {\"reset_all\": true} }}",
+                "options": {}
+            },
+            "id": "reset-all",
+            "name": "Reset All URLs",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1050,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "=https://n8n-python-scraper-production.up.railway.app/scrape/bulk/stop",
+                "authentication": "genericCredentialType",
+                "sendBody": true,
+                "specifyBody": "json",
+                "options": {}
+            },
+            "id": "stop-scrape",
+            "name": "Stop Current Scrape",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                650,
+                500
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "=https://n8n-python-scraper-production.up.railway.app/scrape/bulk",
+                "authentication": "genericCredentialType",
+                "sendBody": false,
+                "options": {}
+            },
+            "id": "start-scrape",
+            "name": "Start Bulk Scrape",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                450,
+                500
+            ]
+        },
+        {
+            "parameters": {
+                "method": "GET",
+                "url": "=https://n8n-python-scraper-production.up.railway.app/scrape/bulk/status",
+                "authentication": "genericCredentialType",
+                "options": {}
+            },
+            "id": "check-status",
+            "name": "Check Scrape Status",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                250,
+                500
+            ]
+        }
+    ],
+    "connections": {
+        "Schedule Trigger (Every 2 Weeks)": {
+            "main": [
+                [
+                    {
+                        "node": "Call Reset API",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Select Status to Reset": {
+            "main": [
+                [
+                    {
+                        "node": "Check Status",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Check Status": {
+            "main": [
+                [
+                    {
+                        "node": "Reset Specific Status",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Reset All URLs",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Stop Current Scrape": {
+            "main": [
+                [
+                    {
+                        "node": "Start Bulk Scrape",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "staticData": null,
+    "tags": [],
+    "pinData": {},
+    "versionId": "1.0.0",
+    "meta": {
+        "templateCredsSetupCompleted": false,
+        "instanceId": ""
+    }
+}
