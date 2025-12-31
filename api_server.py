@@ -664,6 +664,8 @@ async def reset_bulk_urls(request: Optional[dict] = None):
 @app.get("/scrape/bulk/validate")
 async def validate_bulk_scrape():
     """Validate that all URLs have been successfully scraped after bulk scrape"""
+    import time
+    
     try:
         supabase_url = os.getenv("SUPABASE_URL", "https://ykohyrwipxpwztptfopi.supabase.co")
         supabase_key = os.getenv("SUPABASE_KEY")
@@ -673,16 +675,36 @@ async def validate_bulk_scrape():
         
         client = create_client(supabase_url, supabase_key)
         
-        # Get URL queue status breakdown - use pagination for all URLs
+        # Get URL queue status breakdown - use pagination with retry logic for all URLs
         queue_data = []
         batch_size = 1000
         offset = 0
+        max_retries = 3
         
         while True:
-            queue_result = client.table("url_queue").select("*").range(offset, offset + batch_size - 1).execute()
-            batch = queue_result.data if queue_result.data else []
-            if not batch:
+            retry_count = 0
+            last_error = None
+            queue_result = None
+            
+            while retry_count < max_retries:
+                try:
+                    queue_result = client.table("url_queue").select("*").range(offset, offset + batch_size - 1).execute()
+                    break
+                except Exception as e:
+                    last_error = str(e)
+                    if "522" in last_error or "timeout" in last_error.lower() or "timed out" in last_error.lower():
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            wait_time = 2 ** retry_count
+                            print(f"Cloudflare timeout on URL queue batch, retry {retry_count}/{max_retries}, waiting {wait_time}s...")
+                            time.sleep(wait_time)
+                            continue
+                    raise
+            
+            if not queue_result or not queue_result.data:
                 break
+            
+            batch = queue_result.data
             queue_data.extend(batch)
             offset += batch_size
             if len(batch) < batch_size:
