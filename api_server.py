@@ -760,12 +760,8 @@ async def validate_bulk_scrape():
             })
         missing_count = len(missing_urls)
         
-        # Get total documents count efficiently
-        try:
-            docs_result = client.table("documents").select("id").execute()
-            total_documents = len(docs_result.data) if docs_result.data else 0
-        except Exception:
-            total_documents = completed_count - missing_count
+        # Total documents = completed URLs minus missing ones
+        total_documents = completed_count - missing_count
         
         stuck_in_processing = len([i for i in issues if i["type"] == "stuck_processing"])
         missing_documents = missing_count
