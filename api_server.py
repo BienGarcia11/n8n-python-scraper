@@ -672,9 +672,20 @@ async def validate_bulk_scrape():
     
     client = create_client(supabase_url, supabase_key)
     
-    # Get URL queue status breakdown
-    queue_result = client.table("url_queue").select("*").execute()
-    queue_data = queue_result.data if queue_result.data else []
+    # Get URL queue status breakdown - use pagination for all URLs
+    queue_data = []
+    batch_size = 1000
+    offset = 0
+    
+    while True:
+        queue_result = client.table("url_queue").select("*").range(offset, offset + batch_size - 1).execute()
+        batch = queue_result.data if queue_result.data else []
+        if not batch:
+            break
+        queue_data.extend(batch)
+        offset += batch_size
+        if len(batch) < batch_size:
+            break
     
     total_urls = len(queue_data)
     completed_count = len([u for u in queue_data if u["status"] == "completed"])
