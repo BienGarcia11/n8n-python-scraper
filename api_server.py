@@ -682,10 +682,22 @@ async def validate_bulk_scrape():
     pending_count = len([u for u in queue_data if u["status"] == "pending"])
     processing_count = len([u for u in queue_data if u["status"] == "processing"])
     
-    # Get all scraped documents
-    docs_result = client.table("documents").select("*").execute()
-    docs_data = docs_result.data if docs_result.data else []
-    web_scrape_docs = [d for d in docs_data if d.get("metadata", {}).get("source_type") == "web_scrape"]
+    # Get all scraped documents using pagination to handle large datasets
+    web_scrape_docs = []
+    batch_size = 1000
+    offset = 0
+    
+    while True:
+        docs_result = client.table("documents").select("*").eq("metadata->>source_type", "web_scrape").range(offset, offset + batch_size - 1).execute()
+        batch = docs_result.data if docs_result.data else []
+        if not batch:
+            break
+        web_scrape_docs.extend(batch)
+        offset += batch_size
+        # Stop if we got less than batch_size (end of data)
+        if len(batch) < batch_size:
+            break
+    
     total_documents = len(web_scrape_docs)
     
     # Get scraped URLs from documents for cross-reference
