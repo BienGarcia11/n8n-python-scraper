@@ -664,161 +664,174 @@ async def reset_bulk_urls(request: Optional[dict] = None):
 @app.get("/scrape/bulk/validate")
 async def validate_bulk_scrape():
     """Validate that all URLs have been successfully scraped after bulk scrape"""
-    supabase_url = os.getenv("SUPABASE_URL", "https://ykohyrwipxpwztptfopi.supabase.co")
-    supabase_key = os.getenv("SUPABASE_KEY")
-    
-    if not supabase_key:
-        raise HTTPException(status_code=500, detail="SUPABASE_KEY not configured")
-    
-    client = create_client(supabase_url, supabase_key)
-    
-    # Get URL queue status breakdown - use pagination for all URLs
-    queue_data = []
-    batch_size = 1000
-    offset = 0
-    
-    while True:
-        queue_result = client.table("url_queue").select("*").range(offset, offset + batch_size - 1).execute()
-        batch = queue_result.data if queue_result.data else []
-        if not batch:
-            break
-        queue_data.extend(batch)
-        offset += batch_size
-        if len(batch) < batch_size:
-            break
-    
-    total_urls = len(queue_data)
-    completed_count = len([u for u in queue_data if u["status"] == "completed"])
-    failed_count = len([u for u in queue_data if u["status"] == "failed"])
-    pending_count = len([u for u in queue_data if u["status"] == "pending"])
-    processing_count = len([u for u in queue_data if u["status"] == "processing"])
-    
-    # Get completed URLs list for validation
-    completed_urls = [u["url"] for u in queue_data if u["status"] == "completed"]
-    
-    # Check for stuck processing URLs
-    current_time = datetime.utcnow()
-    issues = []
-    missing_count = 0
-    
-    for u in queue_data:
-        if u["status"] == "processing":
-            if u.get("updated_at"):
-                updated_at = datetime.fromisoformat(u["updated_at"].replace("Z", "+00:00"))
-                if (current_time - updated_at).total_seconds() > 3600:
-                    issues.append({
-                        "type": "stuck_processing",
-                        "url": u["url"],
-                        "message": f"URL stuck in processing state for over 1 hour (updated: {u['updated_at']})"
-                    })
-            else:
-                issues.append({
-                    "type": "stuck_processing",
-                    "url": u["url"],
-                    "message": "URL stuck in processing state"
-                })
-    
-    # Get all document URLs efficiently with pagination
-    doc_urls = set()
-    doc_batch_size = 1000
-    offset = 0
-    
-    while True:
-        docs_result = client.table("documents").select("metadata").range(offset, offset + doc_batch_size - 1).execute()
-        batch = docs_result.data if docs_result.data else []
-        if not batch:
-            break
-        # Extract URLs from web_scrape documents
-        for doc in batch:
-            metadata = doc.get("metadata", {})
-            if metadata.get("source_type") == "web_scrape":
-                source = metadata.get("source")
-                if source:
-                    doc_urls.add(source)
-        offset += doc_batch_size
-        if len(batch) < doc_batch_size:
-            break
-    
-    # Compare completed URLs with document URLs (fast set operation)
-    completed_set = set(completed_urls)
-    missing_urls = completed_set - doc_urls
-    
-    # Build issues list for missing URLs (limit to 20 for missing documents)
-    for url in list(missing_urls)[:20]:
-        issues.append({
-            "type": "missing_document",
-            "url": url,
-            "message": "URL marked completed but no matching document found"
-        })
-    missing_count = len(missing_urls)
-    
-    # Get total documents count efficiently
     try:
-        docs_result = client.table("documents").select("id").execute()
-        total_documents = len(docs_result.data) if docs_result.data else 0
-    except Exception:
-        total_documents = completed_count - missing_count
-    
-    stuck_in_processing = len([i for i in issues if i["type"] == "stuck_processing"])
-    missing_documents = missing_count
-    
-    # Calculate success rate
-    success_rate = round((completed_count / total_urls * 100), 1) if total_urls > 0 else 0.0
-    
-    # Add "more issues" entry if total issues exceed display limit
-    if len(issues) > 20:
-        issues.append({
-            "type": "more_issues",
-            "message": f"... and {len(issues) - 20} more issues (total {len(issues)})"
-        })
-    
-    # Limit issues shown in response
-    display_issues = issues[:20] if issues else []
-    
-    # Determine overall status
-    if pending_count == 0 and stuck_in_processing == 0 and missing_documents == 0:
-        overall_status = "✅ All URLs scraped successfully"
-    elif pending_count > 0:
-        overall_status = f"⏳ {pending_count} URLs still pending"
-    elif stuck_in_processing > 0:
-        overall_status = f"⚠️ {stuck_in_processing} URLs stuck in processing"
-    elif missing_documents > 0:
-        overall_status = f"❌ {missing_documents} completed URLs missing documents"
-    else:
-        overall_status = f"⚠️ {len(issues)} issues found"
-    
-    print(f"\n{'='*60}")
-    print(f"VALIDATION REPORT")
-    print(f"{'='*60}")
-    print(f"Total URLs in queue: {total_urls}")
-    print(f"Status breakdown:")
-    print(f"  - Completed: {completed_count}")
-    print(f"  - Failed: {failed_count}")
-    print(f"  - Pending: {pending_count}")
-    print(f"  - Processing: {processing_count}")
-    print(f"\nDocuments scraped: {total_documents}")
-    print(f"\nIssues found: {len(issues)}")
-    if issues:
-        for issue in display_issues:
-            print(f"  - {issue['type']}: {issue['message']}")
-    
-    return {
-        "validation_timestamp": datetime.utcnow().isoformat(),
-        "total_urls_in_queue": total_urls,
-        "status_breakdown": {
-            "completed": completed_count,
-            "failed": failed_count,
-            "pending": pending_count,
-            "processing": processing_count
-        },
-        "total_documents": total_documents,
-        "missing_documents": missing_documents,
-        "stuck_in_processing": stuck_in_processing,
-        "success_rate": success_rate,
-        "issues": display_issues,
-        "total_issues": len(issues),
-        "overall_status": overall_status
-    }
+        supabase_url = os.getenv("SUPABASE_URL", "https://ykohyrwipxpwztptfopi.supabase.co")
+        supabase_key = os.getenv("SUPABASE_KEY")
+        
+        if not supabase_key:
+            raise HTTPException(status_code=500, detail="SUPABASE_KEY not configured")
+        
+        client = create_client(supabase_url, supabase_key)
+        
+        # Get URL queue status breakdown - use pagination for all URLs
+        queue_data = []
+        batch_size = 1000
+        offset = 0
+        
+        while True:
+            queue_result = client.table("url_queue").select("*").range(offset, offset + batch_size - 1).execute()
+            batch = queue_result.data if queue_result.data else []
+            if not batch:
+                break
+            queue_data.extend(batch)
+            offset += batch_size
+            if len(batch) < batch_size:
+                break
+        
+        total_urls = len(queue_data)
+        completed_count = len([u for u in queue_data if u["status"] == "completed"])
+        failed_count = len([u for u in queue_data if u["status"] == "failed"])
+        pending_count = len([u for u in queue_data if u["status"] == "pending"])
+        processing_count = len([u for u in queue_data if u["status"] == "processing"])
+        
+        # Get completed URLs list for validation
+        completed_urls = [u["url"] for u in queue_data if u["status"] == "completed"]
+        
+        # Check for stuck processing URLs
+        current_time = datetime.utcnow()
+        issues = []
+        
+        for u in queue_data:
+            if u["status"] == "processing":
+                try:
+                    if u.get("updated_at"):
+                        updated_at_str = u["updated_at"].replace("Z", "+00:00") if u["updated_at"].endswith("Z") else u["updated_at"]
+                        updated_at = datetime.fromisoformat(updated_at_str)
+                        if (current_time - updated_at).total_seconds() > 3600:
+                            issues.append({
+                                "type": "stuck_processing",
+                                "url": u["url"],
+                                "message": f"URL stuck in processing state for over 1 hour (updated: {u['updated_at']})"
+                            })
+                    else:
+                        issues.append({
+                            "type": "stuck_processing",
+                            "url": u["url"],
+                            "message": "URL stuck in processing state"
+                        })
+                except Exception as e:
+                    print(f"Error processing stuck check for {u['url']}: {e}")
+        
+        # Get all document URLs efficiently with pagination
+        doc_urls = set()
+        doc_batch_size = 1000
+        doc_offset = 0
+        
+        while True:
+            try:
+                docs_result = client.table("documents").select("metadata").range(doc_offset, doc_offset + doc_batch_size - 1).execute()
+                batch = docs_result.data if docs_result.data else []
+                if not batch:
+                    break
+                # Extract URLs from web_scrape documents
+                for doc in batch:
+                    metadata = doc.get("metadata", {})
+                    if metadata.get("source_type") == "web_scrape":
+                        source = metadata.get("source")
+                        if source:
+                            doc_urls.add(source)
+                doc_offset += doc_batch_size
+                if len(batch) < doc_batch_size:
+                    break
+            except Exception as e:
+                print(f"Error fetching documents batch at offset {doc_offset}: {e}")
+                break
+        
+        # Compare completed URLs with document URLs (fast set operation)
+        completed_set = set(completed_urls)
+        missing_urls = completed_set - doc_urls
+        
+        # Build issues list for missing URLs (limit to 20 for missing documents)
+        for url in list(missing_urls)[:20]:
+            issues.append({
+                "type": "missing_document",
+                "url": url,
+                "message": "URL marked completed but no matching document found"
+            })
+        missing_count = len(missing_urls)
+        
+        # Get total documents count efficiently
+        try:
+            docs_result = client.table("documents").select("id").execute()
+            total_documents = len(docs_result.data) if docs_result.data else 0
+        except Exception:
+            total_documents = completed_count - missing_count
+        
+        stuck_in_processing = len([i for i in issues if i["type"] == "stuck_processing"])
+        missing_documents = missing_count
+        
+        # Calculate success rate
+        success_rate = round((completed_count / total_urls * 100), 1) if total_urls > 0 else 0.0
+        
+        # Add "more issues" entry if total issues exceed display limit
+        if len(issues) > 20:
+            issues.append({
+                "type": "more_issues",
+                "message": f"... and {len(issues) - 20} more issues (total {len(issues)})"
+            })
+        
+        # Limit issues shown in response
+        display_issues = issues[:20] if issues else []
+        
+        # Determine overall status
+        if pending_count == 0 and stuck_in_processing == 0 and missing_documents == 0:
+            overall_status = "✅ All URLs scraped successfully"
+        elif pending_count > 0:
+            overall_status = f"⏳ {pending_count} URLs still pending"
+        elif stuck_in_processing > 0:
+            overall_status = f"⚠️ {stuck_in_processing} URLs stuck in processing"
+        elif missing_documents > 0:
+            overall_status = f"❌ {missing_documents} completed URLs missing documents"
+        else:
+            overall_status = f"⚠️ {len(issues)} issues found"
+        
+        print(f"\n{'='*60}")
+        print(f"VALIDATION REPORT")
+        print(f"{'='*60}")
+        print(f"Total URLs in queue: {total_urls}")
+        print(f"Status breakdown:")
+        print(f"  - Completed: {completed_count}")
+        print(f"  - Failed: {failed_count}")
+        print(f"  - Pending: {pending_count}")
+        print(f"  - Processing: {processing_count}")
+        print(f"\nDocuments scraped: {total_documents}")
+        print(f"\nIssues found: {len(issues)}")
+        if issues:
+            for issue in display_issues:
+                print(f"  - {issue['type']}: {issue['message']}")
+        
+        return {
+            "validation_timestamp": datetime.utcnow().isoformat(),
+            "total_urls_in_queue": total_urls,
+            "status_breakdown": {
+                "completed": completed_count,
+                "failed": failed_count,
+                "pending": pending_count,
+                "processing": processing_count
+            },
+            "total_documents": total_documents,
+            "missing_documents": missing_documents,
+            "stuck_in_processing": stuck_in_processing,
+            "success_rate": success_rate,
+            "issues": display_issues,
+            "total_issues": len(issues),
+            "overall_status": overall_status
+        }
+    except Exception as e:
+        print(f"Validation error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Validation failed: {str(e)}")
 
 
 @app.post("/scrape/bulk/stop")
