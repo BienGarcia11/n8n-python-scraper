@@ -688,11 +688,14 @@ async def validate_bulk_scrape():
     offset = 0
     
     while True:
-        docs_result = client.table("documents").select("*").eq("metadata->>source_type", "web_scrape").range(offset, offset + batch_size - 1).execute()
+        # Fetch batch and filter for web_scrape source_type
+        docs_result = client.table("documents").select("*").range(offset, offset + batch_size - 1).execute()
         batch = docs_result.data if docs_result.data else []
         if not batch:
             break
-        web_scrape_docs.extend(batch)
+        # Filter for web_scrape documents
+        web_scrape_batch = [d for d in batch if d.get("metadata", {}).get("source_type") == "web_scrape"]
+        web_scrape_docs.extend(web_scrape_batch)
         offset += batch_size
         # Stop if we got less than batch_size (end of data)
         if len(batch) < batch_size:
