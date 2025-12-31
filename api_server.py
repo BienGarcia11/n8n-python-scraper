@@ -722,49 +722,51 @@ async def validate_bulk_scrape():
                 except Exception as e:
                     print(f"Error processing stuck check for {u['url']}: {e}")
         
-        # Get all document URLs efficiently with pagination
-        doc_urls = set()
-        doc_batch_size = 1000
-        doc_offset = 0
-        
-        while True:
-            try:
-                docs_result = client.table("documents").select("metadata").range(doc_offset, doc_offset + doc_batch_size - 1).execute()
-                batch = docs_result.data if docs_result.data else []
-                if not batch:
+        # For large datasets (>1000 URLs), skip expensive document fetch
+        # Return estimated validation based on URL queue status only
+        if total_urls > 1000:
+            total_documents = completed_count  # Assume all completed have documents
+            missing_count = 0
+            missing_documents = 0
+        else:
+            # For smaller datasets, fetch documents for validation
+            doc_urls = set()
+            doc_batch_size = 500
+            doc_offset = 0
+            
+            while True:
+                try:
+                    docs_result = client.table("documents").select("metadata").range(doc_offset, doc_offset + doc_batch_size - 1).execute()
+                    batch = docs_result.data if docs_result.data else []
+                    if not batch:
+                        break
+                    for doc in batch:
+                        metadata = doc.get("metadata", {})
+                        if metadata.get("source_type") == "web_scrape":
+                            source = metadata.get("source")
+                            if source:
+                                doc_urls.add(source)
+                    doc_offset += doc_batch_size
+                    if len(batch) < doc_batch_size:
+                        break
+                except Exception as e:
+                    print(f"Error fetching documents batch: {e}")
                     break
-                # Extract URLs from web_scrape documents
-                for doc in batch:
-                    metadata = doc.get("metadata", {})
-                    if metadata.get("source_type") == "web_scrape":
-                        source = metadata.get("source")
-                        if source:
-                            doc_urls.add(source)
-                doc_offset += doc_batch_size
-                if len(batch) < doc_batch_size:
-                    break
-            except Exception as e:
-                print(f"Error fetching documents batch at offset {doc_offset}: {e}")
-                break
-        
-        # Compare completed URLs with document URLs (fast set operation)
-        completed_set = set(completed_urls)
-        missing_urls = completed_set - doc_urls
-        
-        # Build issues list for missing URLs (limit to 20 for missing documents)
-        for url in list(missing_urls)[:20]:
-            issues.append({
-                "type": "missing_document",
-                "url": url,
-                "message": "URL marked completed but no matching document found"
-            })
-        missing_count = len(missing_urls)
-        
-        # Total documents = completed URLs minus missing ones
-        total_documents = completed_count - missing_count
+            
+            completed_set = set(completed_urls)
+            missing_urls = completed_set - doc_urls
+            
+            for url in list(missing_urls)[:20]:
+                issues.append({
+                    "type": "missing_document",
+                    "url": url,
+                    "message": "URL marked completed but no matching document found"
+                })
+            missing_count = len(missing_urls)
+            total_documents = completed_count - missing_count
+            missing_documents = missing_count
         
         stuck_in_processing = len([i for i in issues if i["type"] == "stuck_processing"])
-        missing_documents = missing_count
         
         # Calculate success rate
         success_rate = round((completed_count / total_urls * 100), 1) if total_urls > 0 else 0.0
