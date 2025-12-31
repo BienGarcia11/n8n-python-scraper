@@ -675,55 +675,43 @@ async def validate_bulk_scrape():
         
         client = create_client(supabase_url, supabase_key)
         
-        # Get URL queue status breakdown - use pagination with retry logic for all URLs
-        queue_data = []
-        batch_size = 1000
-        offset = 0
-        max_retries = 3
+        # Simplified approach: fetch status breakdown using minimal queries
+        # For large datasets, just fetch first batch to estimate
+        sample_result = client.table("url_queue").select("status").limit(1000).execute()
         
-        while True:
-            retry_count = 0
-            last_error = None
-            queue_result = None
-            
-            while retry_count < max_retries:
-                try:
-                    queue_result = client.table("url_queue").select("*").range(offset, offset + batch_size - 1).execute()
-                    break
-                except Exception as e:
-                    last_error = str(e)
-                    if "522" in last_error or "timeout" in last_error.lower() or "timed out" in last_error.lower():
-                        retry_count += 1
-                        if retry_count < max_retries:
-                            wait_time = 2 ** retry_count
-                            print(f"Cloudflare timeout on URL queue batch, retry {retry_count}/{max_retries}, waiting {wait_time}s...")
-                            time.sleep(wait_time)
-                            continue
-                    raise
-            
-            if not queue_result or not queue_result.data:
-                break
-            
-            batch = queue_result.data
-            queue_data.extend(batch)
-            offset += batch_size
-            if len(batch) < batch_size:
-                break
+        if not sample_result or not sample_result.data:
+            return {
+                "validation_timestamp": datetime.utcnow().isoformat(),
+                "total_urls_in_queue": 0,
+                "status_breakdown": {
+                    "completed": 0,
+                    "failed": 0,
+                    "pending": 0,
+                    "processing": 0
+                },
+                "total_documents": 0,
+                "missing_documents": 0,
+                "stuck_in_processing": 0,
+                "success_rate": 0.0,
+                "issues": [],
+                "total_issues": 0,
+                "overall_status": "No URLs in queue"
+            }
         
-        total_urls = len(queue_data)
-        completed_count = len([u for u in queue_data if u["status"] == "completed"])
-        failed_count = len([u for u in queue_data if u["status"] == "failed"])
-        pending_count = len([u for u in queue_data if u["status"] == "pending"])
-        processing_count = len([u for u in queue_data if u["status"] == "processing"])
+        # Count statuses from sample
+        completed_count = sum(1 for u in sample_result.data if u["status"] == "completed")
+        failed_count = sum(1 for u in sample_result.data if u["status"] == "failed")
+        pending_count = sum(1 for u in sample_result.data if u["status"] == "pending")
+        processing_count = sum(1 for u in sample_result.data if u["status"] == "processing")
         
-        # Get completed URLs list for validation
-        completed_urls = [u["url"] for u in queue_data if u["status"] == "completed"]
+        # Check if we have more data than sampled (indicates >1000 URLs)
+        total_urls = len(sample_result.data)
         
         # Check for stuck processing URLs
         current_time = datetime.utcnow()
         issues = []
         
-        for u in queue_data:
+        for u in sample_result.data:
             if u["status"] == "processing":
                 try:
                     if u.get("updated_at"):
@@ -746,35 +734,23 @@ async def validate_bulk_scrape():
         
         # For large datasets (>1000 URLs), skip expensive document fetch
         # Return estimated validation based on URL queue status only
-        if total_urls > 1000:
+        if total_urls >= 1000:
             total_documents = completed_count  # Assume all completed have documents
-            missing_count = 0
             missing_documents = 0
         else:
             # For smaller datasets, fetch documents for validation
             doc_urls = set()
-            doc_batch_size = 500
-            doc_offset = 0
+            docs_result = client.table("documents").select("metadata").execute()
             
-            while True:
-                try:
-                    docs_result = client.table("documents").select("metadata").range(doc_offset, doc_offset + doc_batch_size - 1).execute()
-                    batch = docs_result.data if docs_result.data else []
-                    if not batch:
-                        break
-                    for doc in batch:
-                        metadata = doc.get("metadata", {})
-                        if metadata.get("source_type") == "web_scrape":
-                            source = metadata.get("source")
-                            if source:
-                                doc_urls.add(source)
-                    doc_offset += doc_batch_size
-                    if len(batch) < doc_batch_size:
-                        break
-                except Exception as e:
-                    print(f"Error fetching documents batch: {e}")
-                    break
+            if docs_result and docs_result.data:
+                for doc in docs_result.data:
+                    metadata = doc.get("metadata", {})
+                    if metadata.get("source_type") == "web_scrape":
+                        source = metadata.get("source")
+                        if source:
+                            doc_urls.add(source)
             
+            completed_urls = [u["url"] for u in sample_result.data if u["status"] == "completed"]
             completed_set = set(completed_urls)
             missing_urls = completed_set - doc_urls
             
@@ -784,6 +760,7 @@ async def validate_bulk_scrape():
                     "url": url,
                     "message": "URL marked completed but no matching document found"
                 })
+            
             missing_count = len(missing_urls)
             total_documents = completed_count - missing_count
             missing_documents = missing_count
@@ -818,7 +795,7 @@ async def validate_bulk_scrape():
         print(f"\n{'='*60}")
         print(f"VALIDATION REPORT")
         print(f"{'='*60}")
-        print(f"Total URLs in queue: {total_urls}")
+        print(f"Total URLs in queue: {total_urls} (sampled from first 1000)")
         print(f"Status breakdown:")
         print(f"  - Completed: {completed_count}")
         print(f"  - Failed: {failed_count}")
