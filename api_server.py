@@ -391,6 +391,7 @@ async def root():
             "POST /scrape/bulk/stop": "Stop running bulk scrape",
             "POST /scrape/bulk/reset": "Reset URL statuses for re-scraping",
             "GET /scrape/bulk/validate": "Validate that all URLs were successfully scraped",
+            "POST /scrape/bulk/validate-and-fix": "Validate and auto-fix issues (reset stuck/missing URLs and scrape)",
             "GET /health": "Health check"
         }
     }
@@ -831,37 +832,72 @@ async def validate_bulk_scrape():
         raise HTTPException(status_code=500, detail=f"Validation failed: {str(e)}")
 
 
-@app.post("/scrape/bulk/stop")
-async def stop_bulk_scrape():
-    """Stop currently running bulk scrape task"""
-    global bulk_status, bulk_task
+@app.post("/scrape/bulk/validate-and-fix")
+async def validate_and_fix():
+    """Validate and auto-fix issues by resetting problematic URLs and triggering bulk scrape"""
+    supabase_url = os.getenv("SUPABASE_URL", "https://ykohyrwipxpwztptfopi.supabase.co")
+    supabase_key = os.getenv("SUPABASE_KEY")
     
-    if not bulk_status["running"]:
+    if not supabase_key:
+        raise HTTPException(status_code=500, detail="SUPABASE_KEY not configured")
+    
+    client = create_client(supabase_url, supabase_key)
+    
+    # Get validation data
+    validation_result = await validate_bulk_scrape()
+    
+    issues = validation_result.get("issues", [])
+    total_issues = validation_result.get("total_issues", 0)
+    
+    if total_issues == 0:
         return {
-            "status": "not_running",
-            "message": "No bulk scrape task is currently running"
+            "status": "no_issues",
+            "message": "No issues found - all URLs are valid",
+            "validation_result": validation_result
         }
     
-    bulk_status["cancelled"] = True
+    # Extract URLs to fix
+    urls_to_fix = set()
+    stuck_urls = []
+    missing_doc_urls = []
     
-    task_id = bulk_status["task_id"]
-    summary = {
-        "task_id": task_id,
-        "total_urls": bulk_status["total_urls"],
-        "processed": bulk_status["processed"],
-        "failed": bulk_status["failed"],
-        "progress": round((bulk_status["processed"] + bulk_status["failed"]) / bulk_status["total_urls"] * 100, 1) if bulk_status["total_urls"] > 0 else 0
-    }
+    for issue in issues:
+        if issue["type"] == "stuck_processing":
+            urls_to_fix.add(issue["url"])
+            stuck_urls.append(issue["url"])
+        elif issue["type"] == "missing_document":
+            urls_to_fix.add(issue["url"])
+            missing_doc_urls.append(issue["url"])
     
-    try:
-        await asyncio.wait_for(bulk_task, timeout=5.0)
-    except asyncio.TimeoutError:
-        pass
+    urls_to_fix = list(urls_to_fix)
+    
+    if not urls_to_fix:
+        return {
+            "status": "no_fixable_issues",
+            "message": "Issues found but none can be auto-fixed",
+            "validation_result": validation_result
+        }
+    
+    # Reset problematic URLs to pending
+    fixed_count = 0
+    for url in urls_to_fix:
+        try:
+            client.table("url_queue").update({"status": "pending"}).eq("url", url).execute()
+            fixed_count += 1
+        except Exception as e:
+            print(f"Failed to reset {url}: {e}")
+    
+    # Start bulk scrape for the fixed URLs
+    bulk_result = await scrape_bulk_urls()
     
     return {
-        "status": "stopped",
-        "message": "Bulk scraper stopped after current batch completes",
-        "summary": summary
+        "status": "fixing",
+        "message": f"Reset {fixed_count} problematic URLs and started bulk scrape",
+        "fixed_urls": fixed_count,
+        "stuck_urls_fixed": len(stuck_urls),
+        "missing_document_urls_fixed": len(missing_doc_urls),
+        "bulk_scrape_task": bulk_result,
+        "validation_result": validation_result
     }
 
 
