@@ -511,19 +511,156 @@ async def health_check():
 
 @app.get("/")
 async def root():
-    """Root endpoint"""
+    """Root endpoint with API documentation and usage examples"""
     return {
         "service": "Web Scraper API",
         "version": "1.0.0",
+        "description": "FastAPI-based web scraper with Playwright for scraping help centers, documentation, and knowledge base sites",
         "endpoints": {
-            "POST /scrape": "Scrape URLs (batch)",
-            "POST /scrape/bulk": "Scrape all pending URLs (bulk)",
-            "GET /scrape/bulk/status": "Check bulk scrape progress",
-            "POST /scrape/bulk/stop": "Stop running bulk scrape",
-            "POST /scrape/bulk/reset": "Reset URL statuses for re-scraping",
-            "GET /scrape/bulk/validate": "Validate that all URLs were successfully scraped",
-            "POST /scrape/bulk/validate-and-fix": "Validate and auto-fix issues (reset stuck/missing URLs and scrape)",
-            "GET /health": "Health check"
+            "GET /": "API documentation and usage examples (you are here)",
+            
+            "GET /health": {
+                "description": "Health check endpoint",
+                "example": "curl https://your-app.railway.app/health",
+                "response": {
+                    "status": "healthy",
+                    "browser_warm": True,
+                    "request_count": 42
+                }
+            },
+            
+            "POST /scrape": {
+                "description": "Scrape multiple URLs concurrently (batch mode, max 100 URLs)",
+                "example": """curl -X POST https://your-app.railway.app/scrape \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "urls": [
+      "https://example.com/article1",
+      "https://example.com/article2"
+    ]
+  }'""",
+                "response": {
+                    "results": [
+                        {
+                            "url": "https://example.com/article1",
+                            "title": "Article Title",
+                            "content": "Full article content...",
+                            "status": "success",
+                            "attempts": 1
+                        }
+                    ],
+                    "total_urls": 1,
+                    "successful": 1,
+                    "failed": 0
+                },
+                "notes": "Use callback_url to receive results via webhook when scraping is complete"
+            },
+            
+            "POST /scrape/bulk": {
+                "description": "Trigger bulk scraping of all pending URLs from database queue",
+                "example": "curl -X POST https://your-app.railway.app/scrape/bulk",
+                "response": {
+                    "task_id": "123e4567-e89b-12d3-a456-426614174000",
+                    "status": "started",
+                    "pending_count": 150,
+                    "message": "Started bulk scraping 150 URLs"
+                },
+                "notes": "Starts background task. Use GET /scrape/bulk/status to monitor progress"
+            },
+            
+            "GET /scrape/bulk/status": {
+                "description": "Check current bulk scraping progress",
+                "example": "curl https://your-app.railway.app/scrape/bulk/status",
+                "response": {
+                    "running": True,
+                    "task_id": "123e4567-e89b-12d3-a456-426614174000",
+                    "started_at": "2026-01-05T15:30:00Z",
+                    "total_urls": 150,
+                    "processed": 75,
+                    "failed": 3,
+                    "progress": 52.0,
+                    "cancelled": False
+                },
+                "notes": "Progress percentage includes both successful and failed URLs"
+            },
+            
+            "POST /scrape/bulk/stop": {
+                "description": "Stop currently running bulk scrape",
+                "example": "curl -X POST https://your-app.railway.app/scrape/bulk/stop",
+                "response": {
+                    "status": "stopping",
+                    "task_id": "123e4567-e89b-12d3-a456-426614174000",
+                    "message": "Bulk scrape cancellation requested. Task will stop after completing current batch."
+                },
+                "notes": "Stops gracefully after completing current batch of URLs"
+            },
+            
+            "POST /scrape/bulk/reset": {
+                "description": "Reset URL statuses to allow re-scraping",
+                "examples": [
+                    "Reset all URLs: curl -X POST https://your-app.railway.app/scrape/bulk/reset -H \"Content-Type: application/json\" -d '{\"reset_all\": true}'",
+                    "Reset failed URLs: curl -X POST https://your-app.railway.app/scrape/bulk/reset -H \"Content-Type: application/json\" -d '{\"status\": \"failed\"}'",
+                    "Reset URLs older than 7 days: curl -X POST https://your-app.railway.app/scrape/bulk/reset -H \"Content-Type: application/json\" -d '{\"days_threshold\": 7}'"
+                ],
+                "response": {
+                    "status": "success",
+                    "reset_count": 45,
+                    "action": "reset_all",
+                    "message": "Reset 45 URLs to pending status"
+                }
+            },
+            
+            "GET /scrape/bulk/validate": {
+                "description": "Validate that all URLs were successfully scraped",
+                "example": "curl https://your-app.railway.app/scrape/bulk/validate",
+                "response": {
+                    "validation_timestamp": "2026-01-05T15:45:00Z",
+                    "total_urls_in_queue": 200,
+                    "status_breakdown": {
+                        "completed": 150,
+                        "completed_with_documents": 148,
+                        "completed_no_documents": 2,
+                        "failed": 3,
+                        "pending": 47,
+                        "processing": 0
+                    },
+                    "total_documents": 148,
+                    "success_rate": 74.0,
+                    "issues": [
+                        {
+                            "type": "completed_no_document",
+                            "url": "https://example.com/article1",
+                            "message": "URL marked as completed but no matching document found"
+                        }
+                    ],
+                    "overall_status": "⚠️ 47 URLs still pending"
+                },
+                "notes": "Identifies stuck URLs, missing documents, and failed scrapes"
+            },
+            
+            "POST /scrape/bulk/validate-and-fix": {
+                "description": "Auto-fix all issues and re-scrape problematic URLs",
+                "example": "curl -X POST https://your-app.railway.app/scrape/bulk/validate-and-fix",
+                "response": {
+                    "status": "fixing",
+                    "message": "Reset 5 problematic URLs and started bulk scrape",
+                    "fixed_urls": 5,
+                    "stuck_urls_fixed": 2,
+                    "completed_no_document_urls_fixed": 3,
+                    "bulk_scrape_task": {
+                        "task_id": "new-task-id",
+                        "status": "started"
+                    }
+                },
+                "notes": "Combines validation and auto-repair - resets problematic URLs and starts bulk scrape"
+            }
+        },
+        "environment_variables": {
+            "SUPABASE_URL": "Supabase project URL (required)",
+            "SUPABASE_KEY": "Supabase anon/service key (required)",
+            "OPENAI_API_KEY": "OpenAI API key for embeddings (optional)",
+            "EMBEDDING_MODEL": "OpenAI embedding model (default: text-embedding-3-small)",
+            "MAX_BULK_URLS": "Maximum URLs to process in bulk (default: 100)"
         }
     }
 
