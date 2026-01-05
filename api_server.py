@@ -31,6 +31,13 @@ scraper = WebScraper(SUPABASE_URL, SUPABASE_KEY, OPENAI_API_KEY, REDIS_URL)
 # Global state for background tasks with task_id system
 task_status: Dict[str, Dict[str, Any]] = {}
 
+# Task type enum
+from enum import Enum
+
+class TaskType(str, Enum):
+    BULK_SCRAPE = "bulk_scrape"
+    VALIDATE_FIX = "validate_fix"
+
 
 # Request/Response Models
 class HealthCheckResponse(BaseModel):
@@ -92,6 +99,7 @@ async def run_bulk_scrape(task_id: str):
     try:
         # Initialize task status
         task_status[task_id] = {
+            "task_type": TaskType.BULK_SCRAPE,
             "status": "running",
             "started_at": asyncio.get_event_loop().time(),
             "processed": 0,
@@ -141,6 +149,7 @@ async def run_validation_fixes(task_id: str, issues: Dict[str, Any]):
     try:
         # Initialize task status
         task_status[task_id] = {
+            "task_type": TaskType.VALIDATE_FIX,
             "status": "running",
             "started_at": asyncio.get_event_loop().time(),
             "fixed": 0,
@@ -329,28 +338,54 @@ async def scraping_status():
     
     # Find current running task
     current_task_id = None
+    current_task_type = None
     task_progress_info = None
+    
+    # Prioritize validate-fix tasks over bulk scrape (show more recent)
     for tid, tinfo in task_status.items():
         if tinfo.get("status") == "running":
-            current_task_id = tid
-            total_urls = tinfo.get("total_urls", 0)
-            processed = tinfo.get("processed", 0)
-            task_progress_info = {
-                "total_urls": total_urls,
-                "processed": processed,
-                "failed": tinfo.get("failed", 0),
-                "status": tinfo.get("status"),
-                "progress": int((processed / total_urls * 100)) if total_urls > 0 else 0
-            }
-            break
+            task_type = tinfo.get("task_type")
+            
+            # If validate-fix is running, show that (higher priority)
+            if task_type == TaskType.VALIDATE_FIX:
+                current_task_id = tid
+                current_task_type = task_type
+                total_issues = tinfo.get("total_issues", 0)
+                fixed = tinfo.get("fixed", 0)
+                task_progress_info = {
+                    "task_type": "validate_fix",
+                    "total_issues": total_issues,
+                    "fixed": fixed,
+                    "failed": tinfo.get("failed", 0),
+                    "status": tinfo.get("status"),
+                    "progress": int((fixed / total_issues * 100)) if total_issues > 0 else 0
+                }
+                break
+            
+            # Otherwise show bulk scrape
+            elif task_type == TaskType.BULK_SCRAPE:
+                if current_task_id is None:  # Only if no validate-fix running
+                    current_task_id = tid
+                    current_task_type = task_type
+                    total_urls = tinfo.get("total_urls", 0)
+                    processed = tinfo.get("processed", 0)
+                    task_progress_info = {
+                        "task_type": "bulk_scrape",
+                        "total_urls": total_urls,
+                        "processed": processed,
+                        "failed": tinfo.get("failed", 0),
+                        "status": tinfo.get("status"),
+                        "progress": int((processed / total_urls * 100)) if total_urls > 0 else 0
+                    }
     
     running = current_task_id is not None
     
     return {
         "running": running,
         "task_id": current_task_id,
+        "task_type": current_task_type.value if current_task_type else None,
         "progress": task_progress_info.get("progress", 0) if task_progress_info else 0,
-        "processed": task_progress_info.get("processed", 0) if task_progress_info else 0,
+        "processed": task_progress_info.get("processed", 0) if task_progress_info else task_progress_info.get("fixed", 0),
         "failed": task_progress_info.get("failed", 0) if task_progress_info else 0,
         "pending_count": counts['pending'],
         "processing_count": counts['processing'],
