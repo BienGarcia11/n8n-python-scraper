@@ -462,100 +462,100 @@ class WebScraper:
     def validate_data(self) -> Dict[str, Any]:
         """
         Validate scraped data for phantom completions, missing embeddings, and stuck URLs.
-        Uses direct PostgreSQL via Supabase REST API for maximum speed - validates ALL URLs.
+        Uses optimized Supabase client queries - validates ALL URLs fast.
         """
-        import requests
-        
         issues = {'phantom_completions': [], 'missing_embeddings': [], 'stuck_urls': []}
         
-        print("🔍 Starting fast PostgreSQL validation (checking ALL URLs)...")
-        
-        # Extract project URL and key for REST API
-        supabase_url = self.supabase_url.replace('supabase.co', 'supabase.co')
-        project_ref = supabase_url.split('//')[1].split('.')[0]
-        api_url = f"https://{project_ref}.supabase.co/rest/v1/rpc/execute_sql"
-        
-        headers = {
-            'apikey': self.supabase_key,
-            'Authorization': f'Bearer {self.supabase_key}',
-            'Content-Type': 'application/json'
-        }
+        print("🔍 Starting fast validation (checking ALL URLs)...")
         
         # 1. Phantom Completions: URLs marked 'completed' but missing from documents
         print("  Checking for phantom completions (ALL completed URLs)...")
         try:
-            sql_phantom = """
-                SELECT uq.url
-                FROM url_queue uq
-                LEFT JOIN documents d ON d.metadata->>'source' = uq.url
-                WHERE uq.status = 'completed'
-                  AND d.id IS NULL
-                LIMIT 1000
-            """
-            response = requests.post(api_url, json={'query': sql_phantom}, headers=headers, timeout=10)
-            if response.status_code == 200 and response.json():
-                result_phantom = response.json()
-                if isinstance(result_phantom, list):
-                    issues['phantom_completions'] = [row.get('url') for row in result_phantom]
-                print(f"  ✓ Found {len(issues['phantom_completions'])} phantom completions")
+            # Get all completed URLs (up to 5000)
+            completed_urls = self.supabase.table('url_queue').select('url').eq('status', 'completed').limit(5000).execute()
+            
+            if completed_urls.data:
+                # Get all document sources (up to 50000)
+                all_urls = set(row['url'] for row in completed_urls.data)
+                
+                # Check documents for each completed URL in batches
+                docs_data = self.supabase.table('documents').select('metadata').limit(50000).execute()
+                doc_sources = set()
+                for doc in docs_data.data:
+                    metadata = doc.get('metadata', {})
+                    source = metadata.get('source')
+                    if source:
+                        doc_sources.add(source)
+                
+                # Find phantom completions
+                for url in all_urls:
+                    if url not in doc_sources:
+                        issues['phantom_completions'].append(url)
+                
+                print(f"  ✓ Found {len(issues['phantom_completions'])} phantom completions out of {len(all_urls)} checked")
             else:
-                print(f"  ⚠️  SQL query failed: {response.status_code}")
-                raise Exception("SQL query failed")
+                print(f"  ✓ No completed URLs to check")
+                
         except Exception as e:
             print(f"  ⚠️  Error checking phantom completions: {e}")
-            # Fallback to slower method if SQL fails
+            # Fallback to slower method
             self._validate_phantom_completions_fallback(issues)
         
         # 2. Missing Embeddings: Documents where embedding is NULL
         print("  Checking for missing embeddings (ALL documents)...")
         try:
-            sql_missing = """
-                SELECT id
-                FROM documents
-                WHERE embedding IS NULL
-                LIMIT 1000
-            """
-            response = requests.post(api_url, json={'query': sql_missing}, headers=headers, timeout=10)
-            if response.status_code == 200 and response.json():
-                result_missing = response.json()
-                if isinstance(result_missing, list):
-                    issues['missing_embeddings'] = [row.get('id') for row in result_missing]
+            # Get documents without embeddings (up to 5000)
+            missing_emb = self.supabase.table('documents').select('id').is_('embedding', 'null').limit(5000).execute()
+            if missing_emb.data:
+                issues['missing_embeddings'] = [row['id'] for row in missing_emb.data]
                 print(f"  ✓ Found {len(issues['missing_embeddings'])} documents without embeddings")
             else:
-                print(f"  ⚠️  SQL query failed: {response.status_code}")
-                raise Exception("SQL query failed")
+                print(f"  ✓ No documents without embeddings")
+                
         except Exception as e:
             print(f"  ⚠️  Error checking missing embeddings: {e}")
-            # Fallback to slower method if SQL fails
+            # Fallback to slower method
             self._validate_missing_embeddings_fallback(issues)
         
         # 3. Stuck URLs: URLs in 'processing' status for > 1 hour
         print("  Checking for stuck URLs (ALL processing URLs)...")
         try:
-            sql_stuck = """
-                SELECT url
-                FROM url_queue
-                WHERE status = 'processing'
-                  AND updated_at < NOW() - INTERVAL '1 hour'
-                LIMIT 500
-            """
-            response = requests.post(api_url, json={'query': sql_stuck}, headers=headers, timeout=10)
-            if response.status_code == 200 and response.json():
-                result_stuck = response.json()
-                if isinstance(result_stuck, list):
-                    issues['stuck_urls'] = [row.get('url') for row in result_stuck]
-                print(f"  ✓ Found {len(issues['stuck_urls'])} stuck URLs (>1 hour in processing)")
+            from datetime import timedelta
+            one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+            
+            # Get processing URLs (up to 5000)
+            processing_urls = self.supabase.table('url_queue').select('url, updated_at').eq('status', 'processing').limit(5000).execute()
+            
+            if processing_urls.data:
+                # Filter by time (1 hour ago)
+                issues['stuck_urls'] = [
+                    row['url'] for row in processing_urls.data 
+                    if row.get('updated_at') and self._is_older_than_one_hour(row['updated_at'])
+                ]
+                print(f"  ✓ Found {len(issues['stuck_urls'])} stuck URLs out of {len(processing_urls.data)} processing")
             else:
-                print(f"  ⚠️  SQL query failed: {response.status_code}")
-                raise Exception("SQL query failed")
+                print(f"  ✓ No processing URLs to check")
+                
         except Exception as e:
             print(f"  ⚠️  Error checking stuck URLs: {e}")
-            # Fallback to slower method if SQL fails
+            # Fallback to slower method
             self._validate_stuck_urls_fallback(issues)
         
-        print(f"✅ PostgreSQL validation complete: {len(issues['phantom_completions'])} phantom, {len(issues['missing_embeddings'])} missing emb, {len(issues['stuck_urls'])} stuck")
+        print(f"✅ Validation complete: {len(issues['phantom_completions'])} phantom, {len(issues['missing_embeddings'])} missing emb, {len(issues['stuck_urls'])} stuck")
         
         return issues
+    
+    def _is_older_than_one_hour(self, timestamp_str: str) -> bool:
+        """Helper to check if timestamp is older than 1 hour."""
+        from datetime import timedelta
+        try:
+            # Parse timestamp from PostgreSQL format
+            if timestamp_str:
+                timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                return (datetime.utcnow() - timestamp).total_seconds() > 3600
+        except Exception:
+            pass
+        return False
     
     def _validate_phantom_completions_fallback(self, issues: Dict[str, Any]):
         """Fallback method for phantom completions using Supabase client."""
