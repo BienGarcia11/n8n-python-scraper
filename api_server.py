@@ -350,13 +350,14 @@ async def scraping_status():
             if task_type == TaskType.VALIDATE_FIX:
                 current_task_id = tid
                 current_task_type = task_type
-                total_issues = tinfo.get("total_issues", 0)
                 fixed = tinfo.get("fixed", 0)
+                failed = tinfo.get("failed", 0)
+                total_issues = fixed + failed
                 task_progress_info = {
                     "task_type": "validate_fix",
                     "total_issues": total_issues,
                     "fixed": fixed,
-                    "failed": tinfo.get("failed", 0),
+                    "failed": failed,
                     "status": tinfo.get("status"),
                     "progress": int((fixed / total_issues * 100)) if total_issues > 0 else 0
                 }
