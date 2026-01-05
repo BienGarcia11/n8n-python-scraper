@@ -518,8 +518,31 @@ async def root():
         "description": "FastAPI-based web scraper with Playwright",
         "endpoints": {
             "GET /": "API documentation (you are here)",
-            "GET /health": "Health check - curl https://your-app.railway.app/health",
-            "POST /scrape": "Scrape URLs - curl -X POST https://your-app.railway.app/scrape -H \"Content-Type: application/json\" -d '{\"urls\": [\"https://example.com\"]}'",
+            "GET /health": "Health check",
+            "POST /scrape": "Scrape URLs",
+            "POST /scrape/bulk": "Start bulk scrape",
+            "GET /scrape/bulk/status": "Check progress",
+            "POST /scrape/bulk/stop": "Stop bulk scrape",
+            "POST /scrape/bulk/reset": "Reset URLs",
+            "GET /scrape/bulk/validate": "Validate results",
+            "POST /scrape/bulk/validate-and-fix": "Auto-fix issues"
+        },
+        "examples": {
+            "bash_curl": "curl -X POST https://your-app.railway.app/scrape -H 'Content-Type: application/json' -d '{"urls": ["https://example.com"]}'",
+            "windows_cmd": "curl -X POST https://your-app.railway.app/scrape -H "Content-Type: application/json" -d "{\"urls\": [\"https://example.com\"]}"",
+            "powershell": "Invoke-RestMethod -Uri 'https://your-app.railway.app/scrape' -Method POST -Headers @{'Content-Type'='application/json'} -Body '{"urls": ["https://example.com"]}'",
+            "powershell_alternative": "$body = @{\"urls\" = @(\"https://example.com\")} | ConvertTo-Json; Invoke-RestMethod -Uri 'https://your-app.railway.app/scrape' -Method POST -Headers @{'Content-Type'='application/json'} -Body $body"
+        },
+        "quick_example": {
+            "title": "Scrape a single URL",
+            "url": "https://your-app.railway.app/scrape",
+            "method": "POST",
+            "body": {
+                "urls": ["https://example.com"]
+            },
+            "description": "Returns scraped content from URL"
+        }
+    }'",
             "POST /scrape/bulk": "Start bulk scrape - curl -X POST https://your-app.railway.app/scrape/bulk",
             "GET /scrape/bulk/status": "Check progress - curl https://your-app.railway.app/scrape/bulk/status",
             "POST /scrape/bulk/stop": "Stop bulk scrape - curl -X POST https://your-app.railway.app/scrape/bulk/stop",
