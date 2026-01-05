@@ -174,7 +174,7 @@ async def run_validation_fixes(task_id: str, issues: Dict[str, Any]):
             task_status[task_id]["status"] = "failed"
             task_status[task_id]["error"] = str(e)
     finally:
-        # Cleanup old task statuses
+        # Cleanup old task statuses (keep only last 10)
         if len(task_status) > 10:
             oldest_tasks = sorted(task_status.keys())[:-10]
             for old_id in oldest_tasks:
@@ -201,7 +201,7 @@ async def shutdown_event():
         await scraper.cleanup()
         print("✅ Browser closed")
     except Exception as e:
-        print(f"⚠️  Warning: Browser cleanup failed: {e}")
+        print(f"⚠️  Warning: Browser cleanup failed on {e}")
     
     # Clean up task statuses
     task_status.clear()
@@ -381,13 +381,18 @@ async def scraping_status():
     
     running = current_task_id is not None
     
+    # Return values with defaults to handle None case
+    progress = task_progress_info.get("progress", 0) if task_progress_info else 0
+    processed = task_progress_info.get("processed", 0) if task_progress_info else task_progress_info.get("fixed", 0)
+    failed = task_progress_info.get("failed", 0) if task_progress_info else 0
+    
     return {
         "running": running,
         "task_id": current_task_id,
         "task_type": current_task_type.value if current_task_type else None,
-        "progress": task_progress_info.get("progress", 0) if task_progress_info else 0,
-        "processed": task_progress_info.get("processed", 0) if task_progress_info else task_progress_info.get("fixed", 0),
-        "failed": task_progress_info.get("failed", 0) if task_progress_info else 0,
+        "progress": progress,
+        "processed": processed,
+        "failed": failed,
         "pending_count": counts['pending'],
         "processing_count": counts['processing'],
         "completed_count": counts['completed'],
