@@ -43,7 +43,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright browsers (Chromium)
 RUN playwright install chromium
-RUN playwright install-deps chromium
 
 # Copy application files
 COPY api_server.py .
