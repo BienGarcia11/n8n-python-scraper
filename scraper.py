@@ -16,6 +16,7 @@ class WebScraper:
         self.supabase: Client = create_client(supabase_url, supabase_key)
         self.openai_client = openai.AsyncOpenAI(api_key=openai_key)
         self.is_running = False
+        self.cancel_requested = False  # Stop signal flag
         
         # Browser management
         self.browser: Optional[Browser] = None
@@ -329,13 +330,24 @@ class WebScraper:
         """
         Scrape a single URL: expand, extract, embed.
         With retry logic and exponential backoff.
+        Checks for cancellation before processing.
         """
+        # Check if cancellation was requested
+        if self.cancel_requested:
+            print(f"  ⏹️  Skipping {url[:50]}... (cancellation requested)")
+            return None
+            
         context = await self.get_browser_context()
         self.request_count += 1
         
         last_error = None
         
         for attempt in range(max_retries):
+            # Check for cancellation at each retry
+            if self.cancel_requested:
+                print(f"  ⏹️  Cancelling {url[:50]}... (attempt {attempt + 1})")
+                return None
+                
             page = None
             try:
                 print(f"  Scraping: {url[:70]}{'...' if len(url) > 70 else ''} (attempt {attempt + 1}/{max_retries})")
@@ -413,16 +425,33 @@ class WebScraper:
     async def process_urls(self, urls: list, max_concurrent: int = 3) -> Dict[str, Any]:
         """
         Process multiple URLs concurrently with semaphore limit.
+        Checks for cancellation and stops immediately when requested.
         """
         semaphore = asyncio.Semaphore(max_concurrent)
         results = {'success': [], 'failed': []}
+        cancelled = False
         
         async def process_with_semaphore(url: str):
+            nonlocal cancelled
+            
+            # Skip if already cancelled
+            if cancelled:
+                return
+                
             async with semaphore:
+                # Check for cancellation before processing
+                if self.cancel_requested:
+                    cancelled = True
+                    return
+                    
                 try:
                     # Scrape URL with retry logic
                     data = await self.scrape_url(url, max_retries=3)
                     
+                    # Skip if cancelled during scraping
+                    if data is None:
+                        return
+                        
                     if data['status'] == 'success':
                         # Insert or update document (with duplicate detection)
                         self.insert_or_update_document(
@@ -435,11 +464,20 @@ class WebScraper:
                     else:
                         results['failed'].append(url)
                 except Exception as e:
-                    print(f"  ❌ Failed to process {url}: {e}")
-                    results['failed'].append(url)
+                    if not self.cancel_requested:
+                        print(f"  ❌ Failed to process {url}: {e}")
+                        results['failed'].append(url)
         
+        # Create tasks
         tasks = [process_with_semaphore(url) for url in urls]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Process tasks and handle cancellation
+        try:
+            # Gather all tasks
+            await asyncio.gather(*tasks, return_exceptions=True)
+        except asyncio.CancelledError:
+            print("  ⏹️  Processing cancelled by stop request")
+            cancelled = True
         
         return results
 

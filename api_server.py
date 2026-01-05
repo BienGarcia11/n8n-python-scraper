@@ -549,21 +549,28 @@ async def reset_to_pending(request: Optional[ResetRequest] = None):
 async def stop_scraping_work():
     """
     Immediately terminate any active scraping processes.
+    Sets cancel flag on scraper to stop processing immediately.
     """
+    # Set cancel flag on scraper instance
+    scraper.cancel_requested = True
+    
     # Find running tasks and mark them as cancelled
     cancelled_count = 0
     for tid, tinfo in task_status.items():
         if tinfo.get("status") == "running":
             task_status[tid]["cancelled"] = True
+            task_status[tid]["status"] = "stopped"
             cancelled_count += 1
-            print(f"Marked task {tid} for cancellation")
+            print(f"✓ Marked task {tid} for cancellation")
     
     if cancelled_count == 0:
+        print("No active scraping process found")
         return StopResponse(
             message="No scraping process is currently active",
             success=False
         )
     
+    print(f"✓ Requested cancellation for {cancelled_count} task(s)")
     return StopResponse(
         message=f"Requested cancellation for {cancelled_count} task(s)",
         success=True
