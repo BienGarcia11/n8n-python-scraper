@@ -345,10 +345,10 @@ async def scraping_status():
     return ScrapingStatusResponse(
         is_scraping=is_scraping,
         current_task_id=current_task_id,
-        pending_count=pending.count if hasattr(pending, 'count') else 0,
-        processing_count=processing.count if hasattr(processing, 'count') else 0,
-        completed_count=completed.count if hasattr(completed, 'count') else 0,
-        failed_count=failed.count if hasattr(failed, 'count') else 0,
+        pending_count=counts['pending'],
+        processing_count=counts['processing'],
+        completed_count=counts['completed'],
+        failed_count=counts['failed'],
         task_progress=task_progress_info
     )
 
