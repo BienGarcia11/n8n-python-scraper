@@ -154,7 +154,8 @@ async def extract_content(page):
         if main_content:
             text = await main_content.text_content()
             if text and len(text.strip()) > 100:
-                print(f"  ✓ Extracted from {'main' if await page.query_selector('main') else 'article'} tag")
+                has_main = await page.query_selector('main')
+                print(f"  ✓ Extracted from {'main' if has_main else 'article'} tag")
                 return text.strip()
     except Exception as e:
         print(f"  ⚠️  Main/article selector failed: {e}")
@@ -344,7 +345,7 @@ async def restart_browser():
     browser = await p.chromium.launch(
         headless=True,
         channel="chrome",
-        args=['--disable-dev-shm-usage', '--disable-setuid-sandbox', '--no-sandbox']
+        args=["--disable-dev-shm-usage", "--disable-setuid-sandbox", "--no-sandbox"]
     )
     browser_context = await browser.new_context(
         user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -368,8 +369,8 @@ async def get_browser_context():
             browser = await p.chromium.launch(
                 headless=True,
                 channel="chrome",
-                args=['--disable-dev-shm-usage', '--disable-setuid-sandbox', '--no-sandbox',
-                      '--disable-gpu', '--no-zygote', '--single-process']
+                args=["--disable-dev-shm-usage", "--disable-setuid-sandbox", "--no-sandbox",
+                      "--disable-gpu", "--no-zygote", "--single-process"]
             )
             browser_context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
