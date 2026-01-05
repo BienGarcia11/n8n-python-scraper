@@ -396,11 +396,16 @@ class WebScraper:
             print(f"  ✓ Inserted new document")
             return 'inserted'
 
-    async def scrape_url(self, url: str, max_retries: int = 3) -> Optional[Dict[str, Any]]:
+    async def scrape_url(self, url: str, max_retries: int = 3, generate_embedding: bool = True) -> Optional[Dict[str, Any]]:
         """
         Scrape a single URL: expand, extract, embed.
         With retry logic and exponential backoff.
         Checks for cancellation before processing.
+        
+        Args:
+            url: URL to scrape
+            max_retries: Number of retry attempts
+            generate_embedding: If False, skip embedding generation (for phantom completion fixes)
         """
         # Check if cancellation was requested
         if self.cancel_requested:
@@ -518,7 +523,7 @@ class WebScraper:
                     
                 try:
                     # Scrape URL without embedding (will do in batch)
-                    data = await self.scrape_url(url, max_retries=3)
+                    data = await self.scrape_url(url, max_retries=3, generate_embedding=False)
                     return data
                 except Exception as e:
                     if not self.cancel_requested:
