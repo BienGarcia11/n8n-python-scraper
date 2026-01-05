@@ -462,47 +462,133 @@ class WebScraper:
     def validate_data(self) -> Dict[str, Any]:
         """
         Validate scraped data for phantom completions, missing embeddings, and stuck URLs.
-        Optimized for large datasets with limits.
+        Uses direct PostgreSQL via Supabase REST API for maximum speed - validates ALL URLs.
         """
+        import requests
+        
         issues = {'phantom_completions': [], 'missing_embeddings': [], 'stuck_urls': []}
         
-        # Optimized: Only check first 100 completed URLs for phantom completions
-        # This prevents slow validation on large datasets
-        print("  Checking for phantom completions (sampling first 100)...")
-        completed_urls = self.supabase.table('url_queue').select('url').eq('status', 'completed').limit(100).execute()
+        print("🔍 Starting fast PostgreSQL validation (checking ALL URLs)...")
         
-        # Batch check for phantom completions
+        # Extract project URL and key for REST API
+        supabase_url = self.supabase_url.replace('supabase.co', 'supabase.co')
+        project_ref = supabase_url.split('//')[1].split('.')[0]
+        api_url = f"https://{project_ref}.supabase.co/rest/v1/rpc/execute_sql"
+        
+        headers = {
+            'apikey': self.supabase_key,
+            'Authorization': f'Bearer {self.supabase_key}',
+            'Content-Type': 'application/json'
+        }
+        
+        # 1. Phantom Completions: URLs marked 'completed' but missing from documents
+        print("  Checking for phantom completions (ALL completed URLs)...")
+        try:
+            sql_phantom = """
+                SELECT uq.url
+                FROM url_queue uq
+                LEFT JOIN documents d ON d.metadata->>'source' = uq.url
+                WHERE uq.status = 'completed'
+                  AND d.id IS NULL
+                LIMIT 1000
+            """
+            response = requests.post(api_url, json={'query': sql_phantom}, headers=headers, timeout=10)
+            if response.status_code == 200 and response.json():
+                result_phantom = response.json()
+                if isinstance(result_phantom, list):
+                    issues['phantom_completions'] = [row.get('url') for row in result_phantom]
+                print(f"  ✓ Found {len(issues['phantom_completions'])} phantom completions")
+            else:
+                print(f"  ⚠️  SQL query failed: {response.status_code}")
+                raise Exception("SQL query failed")
+        except Exception as e:
+            print(f"  ⚠️  Error checking phantom completions: {e}")
+            # Fallback to slower method if SQL fails
+            self._validate_phantom_completions_fallback(issues)
+        
+        # 2. Missing Embeddings: Documents where embedding is NULL
+        print("  Checking for missing embeddings (ALL documents)...")
+        try:
+            sql_missing = """
+                SELECT id
+                FROM documents
+                WHERE embedding IS NULL
+                LIMIT 1000
+            """
+            response = requests.post(api_url, json={'query': sql_missing}, headers=headers, timeout=10)
+            if response.status_code == 200 and response.json():
+                result_missing = response.json()
+                if isinstance(result_missing, list):
+                    issues['missing_embeddings'] = [row.get('id') for row in result_missing]
+                print(f"  ✓ Found {len(issues['missing_embeddings'])} documents without embeddings")
+            else:
+                print(f"  ⚠️  SQL query failed: {response.status_code}")
+                raise Exception("SQL query failed")
+        except Exception as e:
+            print(f"  ⚠️  Error checking missing embeddings: {e}")
+            # Fallback to slower method if SQL fails
+            self._validate_missing_embeddings_fallback(issues)
+        
+        # 3. Stuck URLs: URLs in 'processing' status for > 1 hour
+        print("  Checking for stuck URLs (ALL processing URLs)...")
+        try:
+            sql_stuck = """
+                SELECT url
+                FROM url_queue
+                WHERE status = 'processing'
+                  AND updated_at < NOW() - INTERVAL '1 hour'
+                LIMIT 500
+            """
+            response = requests.post(api_url, json={'query': sql_stuck}, headers=headers, timeout=10)
+            if response.status_code == 200 and response.json():
+                result_stuck = response.json()
+                if isinstance(result_stuck, list):
+                    issues['stuck_urls'] = [row.get('url') for row in result_stuck]
+                print(f"  ✓ Found {len(issues['stuck_urls'])} stuck URLs (>1 hour in processing)")
+            else:
+                print(f"  ⚠️  SQL query failed: {response.status_code}")
+                raise Exception("SQL query failed")
+        except Exception as e:
+            print(f"  ⚠️  Error checking stuck URLs: {e}")
+            # Fallback to slower method if SQL fails
+            self._validate_stuck_urls_fallback(issues)
+        
+        print(f"✅ PostgreSQL validation complete: {len(issues['phantom_completions'])} phantom, {len(issues['missing_embeddings'])} missing emb, {len(issues['stuck_urls'])} stuck")
+        
+        return issues
+    
+    def _validate_phantom_completions_fallback(self, issues: Dict[str, Any]):
+        """Fallback method for phantom completions using Supabase client."""
+        print("  Using fallback method for phantom completions...")
+        completed_urls = self.supabase.table('url_queue').select('url').eq('status', 'completed').limit(1000).execute()
         all_document_sources = set()
-        docs = self.supabase.table('documents').select('metadata').limit(1000).execute()
+        docs = self.supabase.table('documents').select('metadata').limit(10000).execute()
         for doc in docs.data:
             metadata = doc.get('metadata', {})
             source = metadata.get('source')
             if source:
                 all_document_sources.add(source)
-        
-        # Find phantom completions (completed URLs not in documents)
         for row in completed_urls.data:
             url = row['url']
             if url not in all_document_sources:
                 issues['phantom_completions'].append(url)
-        
-        print(f"  ✓ Checked {len(completed_urls.data)} completed URLs")
-        
-        # Optimized: Limit missing embeddings check to first 100
-        print("  Checking for missing embeddings (first 100)...")
-        missing_emb = self.supabase.table('documents').select('id').is_('embedding', 'null').limit(100).execute()
+        print(f"  ✓ Fallback found {len(issues['phantom_completions'])} phantom completions")
+    
+    def _validate_missing_embeddings_fallback(self, issues: Dict[str, Any]):
+        """Fallback method for missing embeddings using Supabase client."""
+        print("  Using fallback method for missing embeddings...")
+        missing_emb = self.supabase.table('documents').select('id').is_('embedding', 'null').limit(1000).execute()
         issues['missing_embeddings'] = [row['id'] for row in missing_emb.data]
-        print(f"  ✓ Found {len(issues['missing_embeddings'])} documents without embeddings")
-        
-        # Optimized: Limit stuck URLs check to first 50
-        print("  Checking for stuck URLs (first 50)...")
+        print(f"  ✓ Fallback found {len(issues['missing_embeddings'])} documents without embeddings")
+    
+    def _validate_stuck_urls_fallback(self, issues: Dict[str, Any]):
+        """Fallback method for stuck URLs using Supabase client."""
+        print("  Using fallback method for stuck URLs...")
         from datetime import timedelta
         one_hour_ago = datetime.utcnow() - timedelta(hours=1)
-        stuck = self.supabase.table('url_queue').select('url').eq('status', 'processing').lt('updated_at', one_hour_ago.isoformat()).limit(50).execute()
+        stuck = self.supabase.table('url_queue').select('url').eq('status', 'processing').lt('updated_at', one_hour_ago.isoformat()).limit(500).execute()
         issues['stuck_urls'] = [row['url'] for row in stuck.data]
-        print(f"  ✓ Found {len(issues['stuck_urls'])} stuck URLs (>1 hour in processing)")
-        
-        return issues
+        print(f"  ✓ Fallback found {len(issues['stuck_urls'])} stuck URLs")
 
     async def fix_validation_issues(self, issues: Dict[str, Any]) -> Dict[str, Any]:
         """
