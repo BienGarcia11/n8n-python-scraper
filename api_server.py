@@ -445,11 +445,17 @@ async def shutdown_event():
 async def scrape_urls(request: ScrapeRequest):
     """Scrape multiple URLs concurrently"""
     
+    # Validate URLs
     if len(request.urls) > 100:
         raise HTTPException(status_code=400, detail="Maximum 100 URLs allowed per request")
     
     if not request.urls:
         raise HTTPException(status_code=400, detail="At least one URL is required")
+    
+    # Validate URL format
+    for url in request.urls:
+        if not url or not url.strip():
+            raise HTTPException(status_code=400, detail="Invalid URL: empty string")
     
     print(f"\n🚀 Starting batch of {len(request.urls)} URLs...")
     
@@ -474,7 +480,7 @@ async def scrape_urls(request: ScrapeRequest):
             await send_callback(request.callback_url, results)
         except Exception as e:
             print(f"❌ Callback failed: {e}")
-            raise
+            raise HTTPException(status_code=500, detail=f"Callback failed: {str(e)}")
     
     return ScrapeResponse(
         results=results,
@@ -528,32 +534,34 @@ async def root():
             "POST /scrape/bulk/validate-and-fix": "Auto-fix issues"
         },
         "examples": {
-            "bash_curl": "curl -X POST https://your-app.railway.app/scrape -H 'Content-Type: application/json' -d '{"urls": ["https://example.com"]}'",
-            "windows_cmd": "curl -X POST https://your-app.railway.app/scrape -H "Content-Type: application/json" -d "{\"urls\": [\"https://example.com\"]}"",
-            "powershell": "Invoke-RestMethod -Uri 'https://your-app.railway.app/scrape' -Method POST -Headers @{'Content-Type'='application/json'} -Body '{"urls": ["https://example.com"]}'",
-            "powershell_alternative": "$body = @{\"urls\" = @(\"https://example.com\")} | ConvertTo-Json; Invoke-RestMethod -Uri 'https://your-app.railway.app/scrape' -Method POST -Headers @{'Content-Type'='application/json'} -Body $body"
+            "bash": "curl -X POST https://your-app.railway.app/scrape -H 'Content-Type: application/json' -d '{\"urls\": [\"https://example.com\"]}'",
+            "powershell": "Invoke-RestMethod -Uri 'https://your-app.railway.app/scrape' -Method POST -Headers @{'Content-Type'='application/json'} -Body '{\"urls\": [\"https://example.com\"]}'",
+            "powershell_with_object": "$body = @{\"urls\" = @(\\\"https://example.com\\\")} | ConvertTo-Json; Invoke-RestMethod -Uri 'https://your-app.railway.app/scrape' -Method POST -Headers @{'Content-Type'='application/json'} -Body $body"
         },
         "quick_example": {
             "title": "Scrape a single URL",
             "url": "https://your-app.railway.app/scrape",
             "method": "POST",
+            "headers": {
+                "Content-Type": "application/json"
+            },
             "body": {
                 "urls": ["https://example.com"]
             },
-            "description": "Returns scraped content from URL"
-        }
-    }'",
-            "POST /scrape/bulk": "Start bulk scrape - curl -X POST https://your-app.railway.app/scrape/bulk",
-            "GET /scrape/bulk/status": "Check progress - curl https://your-app.railway.app/scrape/bulk/status",
-            "POST /scrape/bulk/stop": "Stop bulk scrape - curl -X POST https://your-app.railway.app/scrape/bulk/stop",
-            "POST /scrape/bulk/reset": "Reset URLs - curl -X POST https://your-app.railway.app/scrape/bulk/reset -H \"Content-Type: application/json\" -d '{\"reset_all\": true}'",
-            "GET /scrape/bulk/validate": "Validate results - curl https://your-app.railway.app/scrape/bulk/validate",
-            "POST /scrape/bulk/validate-and-fix": "Auto-fix issues - curl -X POST https://your-app.railway.app/scrape/bulk/validate-and-fix"
-        },
-        "quick_example": {
-            "title": "Scrape a single URL",
-            "command": "curl -X POST https://your-app.railway.app/scrape -H \"Content-Type: application/json\" -d '{\"urls\": [\"https://example.com/article1\"]}'",
-            "description": "Returns scraped content from the URL"
+            "response_example": {
+                "results": [
+                    {
+                        "url": "https://example.com",
+                        "title": "Example Page Title",
+                        "content": "Extracted content...",
+                        "status": "success",
+                        "attempts": 1
+                    }
+                ],
+                "total_urls": 1,
+                "successful": 1,
+                "failed": 0
+            }
         }
     }
 
@@ -578,22 +586,28 @@ async def scrape_bulk_urls():
     if not supabase_key:
         raise HTTPException(status_code=500, detail="SUPABASE_KEY not configured")
     
-    client = create_client(supabase_url, supabase_key)
+    try:
+        client = create_client(supabase_url, supabase_key)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to connect to Supabase: {str(e)}")
     
     # Fetch pending URLs
-    pending_urls = []
-    batch_size = 1000
-    offset = 0
-    while len(pending_urls) < MAX_BULK_URLS:
-        result = client.table("url_queue").select("*").eq("status", "pending").range(offset, offset + batch_size - 1).execute()
-        batch = result.data if result.data else []
-        if not batch:
-            break
-        pending_urls.extend(batch)
-        offset += batch_size
-        if len(pending_urls) >= MAX_BULK_URLS:
-            pending_urls = pending_urls[:MAX_BULK_URLS]
-            break
+    try:
+        pending_urls = []
+        batch_size = 1000
+        offset = 0
+        while len(pending_urls) < MAX_BULK_URLS:
+            result = client.table("url_queue").select("*").eq("status", "pending").range(offset, offset + batch_size - 1).execute()
+            batch = result.data if result.data else []
+            if not batch:
+                break
+            pending_urls.extend(batch)
+            offset += batch_size
+            if len(pending_urls) >= MAX_BULK_URLS:
+                pending_urls = pending_urls[:MAX_BULK_URLS]
+                break
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch pending URLs: {str(e)}")
     
     if not pending_urls:
         return {
@@ -719,11 +733,17 @@ async def scrape_bulk_urls():
                         print(f"  ❌ Failed to process {url}: {e}")
                         total_failed += 1
                         bulk_status["failed"] += 1
-                        client.table("url_queue").update({"status": "failed"}).eq("url", url).execute()
+                        try:
+                            client.table("url_queue").update({"status": "failed"}).eq("url", url).execute()
+                        except Exception as update_error:
+                            print(f"  ❌ Failed to mark URL as failed: {update_error}")
                 else:
                     total_failed += 1
                     bulk_status["failed"] += 1
-                    client.table("url_queue").update({"status": "failed"}).eq("url", url).execute()
+                    try:
+                        client.table("url_queue").update({"status": "failed"}).eq("url", url).execute()
+                    except Exception as update_error:
+                        print(f"  ❌ Failed to mark URL as failed: {update_error}")
             
             print(f"Batch {batch_num} complete")
         
@@ -776,12 +796,15 @@ async def reset_bulk_urls(request: Optional[dict] = None):
     if not supabase_key:
         raise HTTPException(status_code=500, detail="SUPABASE_KEY not configured")
     
+    try:
+        client = create_client(supabase_url, supabase_key)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to connect to Supabase: {str(e)}")
+    
     body = request if request else {}
     reset_all = body.get("reset_all", False)
     status = body.get("status")
     days_threshold = body.get("days_threshold")
-    
-    client = create_client(supabase_url, supabase_key)
     
     if reset_all:
         result = client.table("url_queue").update({"status": "pending"}).execute()
@@ -807,6 +830,9 @@ async def reset_bulk_urls(request: Optional[dict] = None):
         }
     
     elif days_threshold:
+        if not isinstance(days_threshold, (int, float)) or days_threshold < 0:
+            raise HTTPException(status_code=400, detail="days_threshold must be a positive number")
+        
         try:
             result = client.table("url_queue").update({"status": "pending"}).lt("updated_at", datetime.utcnow() - timedelta(days=days_threshold)).execute()
             reset_count = len(result.data) if result.data else 0
@@ -826,8 +852,6 @@ async def reset_bulk_urls(request: Optional[dict] = None):
 @app.get("/scrape/bulk/validate")
 async def validate_bulk_scrape():
     """Validate that all URLs have been successfully scraped after bulk scrape"""
-    import time
-    
     try:
         supabase_url = os.getenv("SUPABASE_URL", "https://ykohyrwipxpwztptfopi.supabase.co")
         supabase_key = os.getenv("SUPABASE_KEY")
@@ -835,7 +859,10 @@ async def validate_bulk_scrape():
         if not supabase_key:
             raise HTTPException(status_code=500, detail="SUPABASE_KEY not configured")
         
-        client = create_client(supabase_url, supabase_key)
+        try:
+            client = create_client(supabase_url, supabase_key)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to connect to Supabase: {str(e)}")
         
         # Fetch all URLs with pagination to get accurate counts
         all_urls = []
@@ -1021,6 +1048,8 @@ async def validate_bulk_scrape():
             "total_issues": len(issues),
             "overall_status": overall_status
         }
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Validation error: {str(e)}")
         import traceback
@@ -1056,7 +1085,10 @@ async def validate_and_fix():
     if not supabase_key:
         raise HTTPException(status_code=500, detail="SUPABASE_KEY not configured")
     
-    client = create_client(supabase_url, supabase_key)
+    try:
+        client = create_client(supabase_url, supabase_key)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to connect to Supabase: {str(e)}")
     
     # Get validation data
     validation_result = await validate_bulk_scrape()
@@ -1107,7 +1139,10 @@ async def validate_and_fix():
             print(f"Failed to reset {url}: {e}")
     
     # Start bulk scrape for fixed URLs
-    bulk_result = await scrape_bulk_urls()
+    try:
+        bulk_result = await scrape_bulk_urls()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start bulk scrape: {str(e)}")
     
     return {
         "status": "fixing",
