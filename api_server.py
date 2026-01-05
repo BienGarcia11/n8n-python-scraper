@@ -888,7 +888,7 @@ async def stop_bulk_scrape():
 
 @app.post("/scrape/bulk/validate-and-fix")
 async def validate_and_fix():
-    """Validate and auto-fix issues by resetting problematic URLs and triggering bulk scrape"""
+    """Validate and auto-fix ALL issues by resetting problematic URLs and triggering bulk scrape"""
     supabase_url = os.getenv("SUPABASE_URL", "https://ykohyrwipxpwztptfopi.supabase.co")
     supabase_key = os.getenv("SUPABASE_KEY")
     
@@ -910,10 +910,11 @@ async def validate_and_fix():
             "validation_result": validation_result
         }
     
-    # Extract URLs to fix
+    # Extract URLs to fix - FIX EVERYTHING
     urls_to_fix = set()
     stuck_urls = []
     completed_no_doc_urls = []
+    failed_urls = []
     
     for issue in issues:
         if issue["type"] == "stuck_processing":
@@ -922,6 +923,9 @@ async def validate_and_fix():
         elif issue["type"] == "completed_no_document":
             urls_to_fix.add(issue["url"])
             completed_no_doc_urls.append(issue["url"])
+        elif issue["type"] == "failed":
+            urls_to_fix.add(issue["url"])
+            failed_urls.append(issue["url"])
     
     urls_to_fix = list(urls_to_fix)
     
@@ -932,7 +936,7 @@ async def validate_and_fix():
             "validation_result": validation_result
         }
     
-    # Reset problematic URLs to pending
+    # Reset ALL problematic URLs to pending
     fixed_count = 0
     for url in urls_to_fix:
         try:
@@ -950,6 +954,7 @@ async def validate_and_fix():
         "fixed_urls": fixed_count,
         "stuck_urls_fixed": len(stuck_urls),
         "completed_no_document_urls_fixed": len(completed_no_doc_urls),
+        "failed_urls_fixed": len(failed_urls),
         "bulk_scrape_task": bulk_result,
         "validation_result": validation_result
     }
