@@ -38,6 +38,113 @@ class ScrapeResponse(BaseModel):
     failed: int
 
 
+async def expand_all_content(page):
+    """Expand all hidden content including dropdowns, accordions, tabs, etc."""
+    expand_actions = 0
+    
+    # Define selectors for expandable elements
+    expandable_selectors = [
+        # Buttons and links with expand indicators
+        'button:has-text("Show more")',
+        'button:has-text("Read more")',
+        'button:has-text("View more")',
+        'button:has-text("Expand")',
+        'button:has-text("See more")',
+        'button:has-text("Continue reading")',
+        'button:has-text("Full article")',
+        'button:has-text("Show all")',
+        'button:has-text("Load more")',
+        'button:has-text("Details")',
+        'a:has-text("Show more")',
+        'a:has-text("Read more")',
+        'a:has-text("View more")',
+        'a:has-text("Expand")',
+        'a:has-text("Continue")',
+        
+        # Buttons/elements with expand symbols
+        'button:has-text("+")',
+        'button:has-text("▶")',
+        'button:has-text("▼")',
+        'button:has-text("⌄")',
+        'a:has-text("+")',
+        'a:has-text("▶")',
+        
+        # Accordion and dropdown triggers
+        '[class*="accordion"] button',
+        '[class*="accordion"] summary',
+        '[class*="collapse"] button',
+        '[class*="collapse"] summary',
+        '[class*="dropdown"] button',
+        '[class*="dropdown"] summary',
+        '[class*="expand"] button',
+        '[class*="expand"] summary',
+        '[class*="toggle"] button',
+        '[class*="toggle"] summary',
+        '[aria-expanded="false"]',
+        
+        # Tab headers
+        '[role="tab"]',
+        '[class*="tab"] button',
+        '[class*="tab"] summary',
+        
+        # FAQ items
+        '[class*="faq"] button',
+        '[class*="faq"] summary',
+        
+        # Readme/Documentation expanders
+        'button:has-text("Show")',
+        'button:has-text("Reveal")',
+        'button:has-text("Unhide")',
+        
+        # Common expand patterns
+        '[data-expand]',
+        '[data-toggle]',
+        '[data-collapsible]',
+        'summary',
+    ]
+    
+    # Multiple passes to handle nested expandable content
+    for pass_num in range(3):
+        expanded_this_pass = 0
+        
+        for selector in expandable_selectors:
+            try:
+                elements = await page.query_selector_all(selector)
+                for element in elements:
+                    try:
+                        # Check if element is visible and clickable
+                        is_visible = await element.is_visible()
+                        if not is_visible:
+                            continue
+                        
+                        # Try clicking the element
+                        await element.click(timeout=1000)
+                        expanded_this_pass += 1
+                        expand_actions += 1
+                        await asyncio.sleep(0.3)  # Brief pause for content to load
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+        
+        # Scroll to trigger lazy-loaded content
+        try:
+            await page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
+            await asyncio.sleep(0.5)
+        except Exception:
+            pass
+        
+        # If nothing was expanded in this pass, stop
+        if expanded_this_pass == 0:
+            break
+    
+    if expand_actions > 0:
+        print(f"  ✓ Expanded {expand_actions} hidden content elements")
+    
+    # Additional wait after expanding
+    await asyncio.sleep(1)
+
+
 async def extract_content(page):
     """Extract main content from Playwright page using direct DOM queries"""
     
@@ -142,6 +249,7 @@ async def scrape_single_url(context, url, semaphore, max_retries=3):
                     print(f"  ⚠️  Cookie handling: {e}")
                 
                 title = await asyncio.wait_for(page.title(), timeout=5000)
+                await expand_all_content(page)
                 content = await extract_content(page)
                 
                 if not content or len(content.strip()) < 50:
