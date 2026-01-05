@@ -95,8 +95,8 @@ async def run_bulk_scrape():
         for url in urls:
             scraper.update_url_status(url, 'processing')
         
-        # Process URLs concurrently
-        results = await scraper.process_urls(urls, max_concurrent=2)
+        # Process URLs concurrently (3 at a time)
+        results = await scraper.process_urls(urls, max_concurrent=3)
         
         # Update status based on results
         for url in results['success']:
