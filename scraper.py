@@ -468,7 +468,7 @@ class WebScraper:
     def validate_data(self) -> Dict[str, Any]:
         """
         Validate scraped data for phantom completions, missing embeddings, and stuck URLs.
-        Uses optimized Supabase client queries - validates ALL URLs fast.
+        Uses pagination to fetch ALL URLs - no limits.
         """
         issues = {'phantom_completions': [], 'missing_embeddings': [], 'stuck_urls': []}
         
@@ -477,21 +477,23 @@ class WebScraper:
         # 1. Phantom Completions: URLs marked 'completed' but missing from documents
         print("  Checking for phantom completions (ALL completed URLs)...")
         try:
-            # Get ALL completed URLs (no limit)
-            completed_urls = self.supabase.table('url_queue').select('url').eq('status', 'completed').execute()
+            # Get ALL completed URLs with pagination
+            completed_urls = self._fetch_all_rows('url_queue', 'url', 'status', 'completed')
             
-            if completed_urls.data:
-                # Get all document sources (no limit)
-                all_urls = set(row['url'] for row in completed_urls.data)
+            if completed_urls:
+                all_urls = set(row['url'] for row in completed_urls)
+                print(f"    Loaded {len(all_urls)} completed URLs")
                 
-                # Check documents for each completed URL (no limit)
-                docs_data = self.supabase.table('documents').select('metadata').execute()
+                # Get ALL document sources with pagination
+                docs_data = self._fetch_all_rows('documents', 'metadata')
                 doc_sources = set()
-                for doc in docs_data.data:
+                for doc in docs_data:
                     metadata = doc.get('metadata', {})
                     source = metadata.get('source')
                     if source:
                         doc_sources.add(source)
+                
+                print(f"    Loaded {len(doc_sources)} document sources")
                 
                 # Find phantom completions
                 for url in all_urls:
@@ -510,10 +512,10 @@ class WebScraper:
         # 2. Missing Embeddings: Documents where embedding is NULL
         print("  Checking for missing embeddings (ALL documents)...")
         try:
-            # Get ALL documents without embeddings (no limit)
-            missing_emb = self.supabase.table('documents').select('id').is_('embedding', 'null').execute()
-            if missing_emb.data:
-                issues['missing_embeddings'] = [row['id'] for row in missing_emb.data]
+            # Get ALL documents without embeddings with pagination
+            missing_emb = self._fetch_all_rows('documents', 'id', filter_column='embedding', filter_value='null')
+            if missing_emb:
+                issues['missing_embeddings'] = [row['id'] for row in missing_emb]
                 print(f"  ✓ Found {len(issues['missing_embeddings'])} documents without embeddings")
             else:
                 print(f"  ✓ No documents without embeddings")
@@ -526,19 +528,16 @@ class WebScraper:
         # 3. Stuck URLs: URLs in 'processing' status for > 1 hour
         print("  Checking for stuck URLs (ALL processing URLs)...")
         try:
-            from datetime import timedelta
-            one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+            # Get ALL processing URLs with pagination
+            processing_urls = self._fetch_all_rows('url_queue', 'url, updated_at', 'status', 'processing')
             
-            # Get ALL processing URLs (no limit)
-            processing_urls = self.supabase.table('url_queue').select('url, updated_at').eq('status', 'processing').execute()
-            
-            if processing_urls.data:
+            if processing_urls:
                 # Filter by time (1 hour ago)
                 issues['stuck_urls'] = [
-                    row['url'] for row in processing_urls.data 
+                    row['url'] for row in processing_urls 
                     if row.get('updated_at') and self._is_older_than_one_hour(row['updated_at'])
                 ]
-                print(f"  ✓ Found {len(issues['stuck_urls'])} stuck URLs out of {len(processing_urls.data)} processing")
+                print(f"  ✓ Found {len(issues['stuck_urls'])} stuck URLs out of {len(processing_urls)} processing")
             else:
                 print(f"  ✓ No processing URLs to check")
                 
@@ -563,37 +562,93 @@ class WebScraper:
             pass
         return False
     
+    def _fetch_all_rows(self, table: str, columns: str, filter_column: Optional[str] = None, filter_value: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Fetch ALL rows from a table using pagination to bypass Supabase's 1000-row limit.
+        """
+        all_rows = []
+        offset = 0
+        batch_size = 1000  # Maximum rows per request
+        
+        while True:
+            query = self.supabase.table(table).select(columns)
+            
+            # Apply filter if specified
+            if filter_column and filter_value:
+                if filter_value == 'null':
+                    query = query.is_(filter_column, 'null')
+                else:
+                    query = query.eq(filter_column, filter_value)
+            
+            # Apply pagination
+            query = query.range(offset, offset + batch_size - 1)
+            
+            # Execute query
+            response = query.execute()
+            
+            # If no rows returned, we're done
+            if not response.data or len(response.data) == 0:
+                break
+            
+            # Add rows to result
+            all_rows.extend(response.data)
+            
+            # Check if we got less than batch_size (last page)
+            if len(response.data) < batch_size:
+                break
+            
+            # Move to next page
+            offset += batch_size
+            print(f"    Fetched {len(all_rows)} rows so far...")
+        
+        return all_rows
+    
     def _validate_phantom_completions_fallback(self, issues: Dict[str, Any]):
-        """Fallback method for phantom completions using Supabase client."""
-        print("  Using fallback method for phantom completions...")
-        completed_urls = self.supabase.table('url_queue').select('url').eq('status', 'completed').limit(1000).execute()
+        """Fallback method for phantom completions using Supabase client - checks ALL with pagination."""
+        print("  Using fallback method for phantom completions (ALL URLs)...")
+        
+        # Get ALL completed URLs with pagination
+        completed_urls = self._fetch_all_rows('url_queue', 'url', 'status', 'completed')
+        
+        # Get ALL document sources with pagination
         all_document_sources = set()
-        docs = self.supabase.table('documents').select('metadata').limit(10000).execute()
-        for doc in docs.data:
+        docs = self._fetch_all_rows('documents', 'metadata')
+        for doc in docs:
             metadata = doc.get('metadata', {})
             source = metadata.get('source')
             if source:
                 all_document_sources.add(source)
-        for row in completed_urls.data:
+        
+        # Find phantom completions
+        for row in completed_urls:
             url = row['url']
             if url not in all_document_sources:
                 issues['phantom_completions'].append(url)
+        
         print(f"  ✓ Fallback found {len(issues['phantom_completions'])} phantom completions")
     
     def _validate_missing_embeddings_fallback(self, issues: Dict[str, Any]):
-        """Fallback method for missing embeddings using Supabase client."""
-        print("  Using fallback method for missing embeddings...")
-        missing_emb = self.supabase.table('documents').select('id').is_('embedding', 'null').limit(1000).execute()
-        issues['missing_embeddings'] = [row['id'] for row in missing_emb.data]
+        """Fallback method for missing embeddings using Supabase client - checks ALL with pagination."""
+        print("  Using fallback method for missing embeddings (ALL documents)...")
+        
+        # Get ALL documents without embeddings with pagination
+        missing_emb = self._fetch_all_rows('documents', 'id', filter_column='embedding', filter_value='null')
+        issues['missing_embeddings'] = [row['id'] for row in missing_emb]
         print(f"  ✓ Fallback found {len(issues['missing_embeddings'])} documents without embeddings")
     
     def _validate_stuck_urls_fallback(self, issues: Dict[str, Any]):
-        """Fallback method for stuck URLs using Supabase client."""
-        print("  Using fallback method for stuck URLs...")
-        from datetime import timedelta
-        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
-        stuck = self.supabase.table('url_queue').select('url').eq('status', 'processing').lt('updated_at', one_hour_ago.isoformat()).limit(500).execute()
-        issues['stuck_urls'] = [row['url'] for row in stuck.data]
+        """Fallback method for stuck URLs using Supabase client - checks ALL with pagination."""
+        print("  Using fallback method for stuck URLs (ALL URLs)...")
+        
+        # Get ALL processing URLs with pagination
+        stuck = self._fetch_all_rows('url_queue', 'url, updated_at', 'status', 'processing')
+        
+        # Filter by time in Python
+        for row in stuck:
+            url = row['url']
+            if row.get('updated_at') and self._is_older_than_one_hour(row['updated_at']):
+                issues['stuck_urls'].append(url)
+        
         print(f"  ✓ Fallback found {len(issues['stuck_urls'])} stuck URLs")
 
     async def fix_validation_issues(self, issues: Dict[str, Any]) -> Dict[str, Any]:
