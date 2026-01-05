@@ -481,18 +481,94 @@ class WebScraper:
         
         return results
 
-    def get_pending_urls(self, limit: Optional[int] = None) -> list:
+    async def process_urls_batched(self, max_concurrent: int = 3, batch_size: int = 30) -> Dict[str, Any]:
         """
-        Get ALL pending URLs from url_queue table.
-        If limit is None, gets all URLs (no limit).
+        Process ALL pending URLs in batches with browser restarts.
+        
+        Workflow:
+        1. Get batch of 30 URLs
+        2. Process 3 URLs concurrently
+        3. After batch of 30 done, restart browser (memory cleanup)
+        4. Get next batch of 30 URLs
+        5. Repeat until all pending URLs processed
         """
-        if limit is None:
-            # Get all pending URLs without limit
-            response = self.supabase.table('url_queue').select('url').eq('status', 'pending').execute()
+        print(f"🚀 Starting batched processing (batch_size={batch_size}, concurrent={max_concurrent})")
+        
+        total_results = {'success': [], 'failed': []}
+        batch_num = 0
+        
+        while True:
+            # Check for cancellation
+            if self.cancel_requested:
+                print("  ⏹️  Batched processing cancelled")
+                break
+            
+            # Get next batch of URLs
+            batch_urls = self.get_pending_urls(limit=None, batch_size=batch_size, batch_num=batch_num)
+            
+            if not batch_urls:
+                print(f"✅ No more URLs to process")
+                break
+            
+            print(f"\n📦 Batch {batch_num + 1}: Processing {len(batch_urls)} URLs")
+            
+            # Mark all URLs in batch as 'processing'
+            for url in batch_urls:
+                self.update_url_status(url, 'processing')
+            
+            # Process this batch
+            batch_results = await self.process_urls(batch_urls, max_concurrent=max_concurrent)
+            
+            # Update status based on results
+            for url in batch_results['success']:
+                self.update_url_status(url, 'completed')
+                total_results['success'].append(url)
+            
+            for url in batch_results['failed']:
+                self.update_url_status(url, 'failed')
+                total_results['failed'].append(url)
+            
+            print(f"  Batch {batch_num + 1} complete: {len(batch_results['success'])} success, {len(batch_results['failed'])} failed")
+            
+            # Reset request count for next batch (browser will restart at start of next batch)
+            self.request_count = 0
+            
+            # Move to next batch
+            batch_num += 1
+        
+        print(f"\n✅ All batches complete: {len(total_results['success'])} success, {len(total_results['failed'])} failed")
+        
+        return total_results
+
+    def get_pending_urls(self, limit: Optional[int] = None, batch_size: int = 30, batch_num: int = 0) -> list:
+        """
+        Get pending URLs in batches.
+        
+        Args:
+            limit: Maximum total URLs to get (None = all)
+            batch_size: How many URLs to return in this batch (default 30)
+            batch_num: Which batch number (0-indexed, for pagination)
+        
+        Returns:
+            List of URLs for this batch (max batch_size)
+        """
+        query = self.supabase.table('url_queue').select('url').eq('status', 'pending')
+        
+        # Apply limit if specified
+        if limit is not None:
+            query = query.limit(limit)
         else:
-            # Use limit if specified
-            response = self.supabase.table('url_queue').select('url').eq('status', 'pending').limit(limit).execute()
+            # For batched processing, paginate by batch_size
+            offset = batch_num * batch_size
+            query = query.range(offset, offset + batch_size - 1)
+        
+        response = query.execute()
         return [row['url'] for row in response.data]
+    
+    def get_total_pending_count(self) -> int:
+        """Get total count of pending URLs."""
+        response = self.supabase.table('url_queue').select('id', count='exact').eq('status', 'pending').execute()
+        return response.count if hasattr(response, 'count') else 0
 
     def update_url_status(self, url: str, status: str) -> None:
         """
@@ -691,54 +767,116 @@ class WebScraper:
 
     async def fix_validation_issues(self, issues: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Automatically fix validation errors.
+        Automatically fix validation errors using batched processing.
         """
         results = {'fixed': 0, 'failed': 0}
         
-        # Fix phantom completions: Re-scrape and insert
-        print(f"\n🔧 Fixing {len(issues.get('phantom_completions', []))} phantom completions...")
-        for url in issues.get('phantom_completions', []):
-            try:
-                data = await self.scrape_url(url, max_retries=3)
-                if data['status'] == 'success':
-                    self.insert_or_update_document(
-                        data['url'],
-                        data['content'],
-                        data['title'],
-                        data['embedding']
-                    )
-                    results['fixed'] += 1
-                else:
-                    results['failed'] += 1
-            except Exception as e:
-                print(f"  ❌ Failed to fix phantom completion for {url}: {e}")
-                results['failed'] += 1
+        # Fix phantom completions: Re-scrape and insert (in batches of 30)
+        phantom_urls = issues.get('phantom_completions', [])
+        print(f"\n🔧 Fixing {len(phantom_urls)} phantom completions (batched)...")
         
-        # Fix missing embeddings: Retrieve content, generate embedding, update
-        print(f"\n🔧 Fixing {len(issues.get('missing_embeddings', []))} missing embeddings...")
-        for doc_id in issues.get('missing_embeddings', []):
-            try:
-                doc = self.supabase.table('documents').select('id, content').eq('id', doc_id).single().execute()
-                if doc.data:
-                    content = doc.data['content']
-                    embedding = await self.generate_embedding(content)
-                    self.supabase.table('documents').update({'embedding': embedding}).eq('id', doc_id).execute()
-                    results['fixed'] += 1
-                else:
-                    results['failed'] += 1
-            except Exception as e:
-                print(f"  ❌ Failed to fix missing embedding for doc {doc_id}: {e}")
-                results['failed'] += 1
-        
-        # Reset stuck URLs to pending
-        print(f"\n🔧 Resetting {len(issues.get('stuck_urls', []))} stuck URLs...")
-        for url in issues.get('stuck_urls', []):
-            try:
-                self.supabase.table('url_queue').update({'status': 'pending', 'updated_at': 'now()'}).eq('url', url).execute()
+        for batch_num in range(0, len(phantom_urls), 30):
+            # Check for cancellation
+            if self.cancel_requested:
+                print("  ⏹️  Phantom completion fix cancelled")
+                break
+            
+            batch = phantom_urls[batch_num:batch_num + 30]
+            print(f"\n  Batch {batch_num // 30 + 1}: Processing {len(batch)} phantom URLs")
+            
+            # Process batch with 3 concurrent
+            batch_results = await self.process_urls(batch, max_concurrent=3)
+            
+            # Update results
+            for url in batch_results['success']:
+                # Already inserted by process_urls, just count
                 results['fixed'] += 1
-            except Exception as e:
-                print(f"  ❌ Failed to reset stuck URL {url}: {e}")
+            
+            for url in batch_results['failed']:
                 results['failed'] += 1
+            
+            print(f"  Batch {batch_num // 30 + 1} complete: {len(batch_results['success'])} fixed, {len(batch_results['failed'])} failed")
+            
+            # Reset request count for browser restart
+            self.request_count = 0
+        
+        # Fix missing embeddings: Retrieve content, generate embedding, update (batched)
+        missing_emb_ids = issues.get('missing_embeddings', [])
+        print(f"\n🔧 Fixing {len(missing_emb_ids)} missing embeddings (batched)...")
+        
+        for batch_num in range(0, len(missing_emb_ids), 30):
+            # Check for cancellation
+            if self.cancel_requested:
+                print("  ⏹️  Missing embedding fix cancelled")
+                break
+            
+            batch = missing_emb_ids[batch_num:batch_num + 30]
+            print(f"\n  Batch {batch_num // 30 + 1}: Processing {len(batch)} document IDs")
+            
+            # Process batch concurrently
+            batch_fixed = 0
+            batch_failed = 0
+            
+            async def fix_one_embedding(doc_id):
+                try:
+                    doc = self.supabase.table('documents').select('id, content').eq('id', doc_id).single().execute()
+                    if doc.data:
+                        content = doc.data['content']
+                        embedding = await self.generate_embedding(content)
+                        self.supabase.table('documents').update({'embedding': embedding}).eq('id', doc_id).execute()
+                        return True
+                    return False
+                except Exception as e:
+                    print(f"  ❌ Failed to fix missing embedding for doc {doc_id}: {e}")
+                    return False
+            
+            # Process 3 at a time
+            tasks = [fix_one_embedding(doc_id) for doc_id in batch]
+            results_list = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for result in results_list:
+                if isinstance(result, Exception):
+                    batch_failed += 1
+                elif result:
+                    batch_fixed += 1
+                else:
+                    batch_failed += 1
+            
+            results['fixed'] += batch_fixed
+            results['failed'] += batch_failed
+            
+            print(f"  Batch {batch_num // 30 + 1} complete: {batch_fixed} fixed, {batch_failed} failed")
+        
+        # Reset stuck URLs to pending (batched)
+        stuck_urls = issues.get('stuck_urls', [])
+        print(f"\n🔧 Resetting {len(stuck_urls)} stuck URLs (batched)...")
+        
+        for batch_num in range(0, len(stuck_urls), 30):
+            # Check for cancellation
+            if self.cancel_requested:
+                print("  ⏹️  Stuck URL reset cancelled")
+                break
+            
+            batch = stuck_urls[batch_num:batch_num + 30]
+            print(f"\n  Batch {batch_num // 30 + 1}: Resetting {len(batch)} URLs")
+            
+            batch_fixed = 0
+            batch_failed = 0
+            
+            for url in batch:
+                try:
+                    self.supabase.table('url_queue').update({'status': 'pending', 'updated_at': 'now()'}).eq('url', url).execute()
+                    batch_fixed += 1
+                except Exception as e:
+                    print(f"  ❌ Failed to reset stuck URL {url}: {e}")
+                    batch_failed += 1
+            
+            results['fixed'] += batch_fixed
+            results['failed'] += batch_failed
+            
+            print(f"  Batch {batch_num // 30 + 1} complete: {batch_fixed} fixed, {batch_failed} failed")
+        
+        print(f"\n✅ All validation fixes complete: {results['fixed']} fixed, {results['failed']} failed")
         
         return results
     

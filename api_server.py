@@ -98,30 +98,20 @@ async def run_bulk_scrape(task_id: str):
             "cancelled": False
         }
         
-        # Get ALL pending URLs (pass None to get all, no limit)
-        urls = scraper.get_pending_urls(limit=None)
+        # Get total count of pending URLs
+        total_count = scraper.get_total_pending_count()
         
-        if not urls:
+        if total_count == 0:
             print("No pending URLs to process")
             task_status[task_id]["status"] = "completed"
             task_status[task_id]["message"] = "No pending URLs to process"
             return
             
-        print(f"Starting bulk scrape for {len(urls)} URLs (Task: {task_id})")
-        task_status[task_id]["total_urls"] = len(urls)
+        print(f"Starting bulk scrape for {total_count} URLs (Task: {task_id})")
+        task_status[task_id]["total_urls"] = total_count
         
-        # Update all URLs to 'processing' status
-        for url in urls:
-            scraper.update_url_status(url, 'processing')
-        
-        # Process URLs concurrently (3 at a time)
-        results = await scraper.process_urls(urls, max_concurrent=3)
-        
-        # Update status based on results
-        for url in results['success']:
-            scraper.update_url_status(url, 'completed')
-        for url in results['failed']:
-            scraper.update_url_status(url, 'failed')
+        # Process URLs in batches of 30 with browser restarts
+        results = await scraper.process_urls_batched(max_concurrent=3, batch_size=30)
         
         # Update task status
         task_status[task_id]["processed"] = len(results['success'])
