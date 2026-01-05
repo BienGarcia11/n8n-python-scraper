@@ -2,12 +2,50 @@
 __pycache__/
 *.py[cod]
 *$py.class
-venv/
-.env
-.clinerules/
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Local Test/Config Files
-test_embedding_workflow.json
-python indexer/simple_embed.py
-test_fyi_clients.py
-restore_url_queue.sql
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# Environment variables
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Playwright
+.playwright/
+ms-playwright/
+
+# Logs
+*.log
+
+# Railway
+railway-*

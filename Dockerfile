@@ -1,14 +1,12 @@
-# Use Python 3.11 slim image
-FROM python:3.11-slim
+# Use Python 3.12 slim as base image
+FROM python:3.12-slim
 
-# Build timestamp to force clean rebuilds when environment changes
-ARG BUILD_TIMESTAMP=0
-ENV BUILD_TIMESTAMP=${BUILD_TIMESTAMP}
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# Set working directory
-WORKDIR /app
-
-# Install system dependencies
+# Install system dependencies required for Playwright Chromium
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -34,33 +32,33 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Chromium
-RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
-    && apt-get update \
-    && apt-get install -y google-chrome-stable \
-    && rm -rf /var/lib/apt/lists/*
+# Set working directory
+WORKDIR /app
 
-# Copy requirements first for better caching
+# Copy requirements file
 COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browsers
+# Install Playwright browsers (Chromium)
 RUN playwright install chromium
+RUN playwright install-deps chromium
 
-# Copy application code (v3 - timestamp to force rebuild)
-ARG BUILD_TIMESTAMP
-RUN echo "Build timestamp: ${BUILD_TIMESTAMP}"
+# Copy application files
 COPY api_server.py .
+COPY scraper.py .
 
-# Expose port
+# Create a non-root user
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+
+# Expose port (Railway will set PORT dynamically)
 EXPOSE 8000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:${PORT:-8000}/health', timeout=5)" || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import httpx; httpx.get('http://localhost:$PORT/health_check')" || exit 1
 
-# Run application with uvicorn using shell to expand PORT variable
-CMD ["sh", "-c", "uvicorn api_server:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Run the application
+CMD ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "8000"]
