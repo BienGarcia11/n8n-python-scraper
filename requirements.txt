@@ -1,20 +1,20 @@
 # Core dependencies
-playwright==1.41.0
-supabase==2.7.4
-openai==1.12.0
-python-dotenv==1.0.0
+playwright
+supabase
+openai
+python-dotenv
 
-# HTTP requests - compatible with latest Supabase
-httpx>=0.24.0
+# HTTP requests
+httpx
 
 # Async HTTP
-aiohttp==3.9.1
-asyncio==3.4.3
+aiohttp
+asyncio
 
 # HTML parsing
-beautifulsoup4==4.12.3
-lxml==5.1.0
+beautifulsoup4
+lxml
 
 # Utilities
-python-dateutil==2.8.2
-tenacity==8.2.3
+python-dateutil
+tenacity
