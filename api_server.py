@@ -112,6 +112,53 @@ async def run_bulk_scrape():
         scraping_active = False
 
 
+# Root endpoint - Show all available endpoints
+@app.get("/")
+async def root():
+    """Show all available API endpoints."""
+    return {
+        "service": "Bulk Web Scraper for RAG",
+        "version": "1.0.0",
+        "endpoints": [
+            {
+                "path": "/health_check",
+                "method": "GET",
+                "description": "Return service status"
+            },
+            {
+                "path": "/start_bulk_scrape",
+                "method": "POST",
+                "description": "Begin scraping job (processes in background)"
+            },
+            {
+                "path": "/scraping_status",
+                "method": "GET",
+                "description": "Check queue and job status"
+            },
+            {
+                "path": "/validate",
+                "method": "GET",
+                "description": "Run validation checks on scraped data"
+            },
+            {
+                "path": "/validate-fix",
+                "method": "POST",
+                "description": "Automatically fix validation errors"
+            },
+            {
+                "path": "/reset_to_pending",
+                "method": "POST",
+                "description": "Reset URLs to pending status"
+            },
+            {
+                "path": "/stop_scraping_work",
+                "method": "POST",
+                "description": "Stop active scraping processes"
+            }
+        ]
+    }
+
+
 # API Endpoints
 @app.get("/health_check", response_model=HealthCheckResponse)
 async def health_check():
