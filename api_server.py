@@ -148,7 +148,7 @@ async def expand_all_content(page):
 async def extract_content(page):
     """Extract main content from Playwright page using direct DOM queries"""
     
-    # Try to find main content element
+    # Strategy 1: Try to find main content element
     try:
         main_content = await page.query_selector("main") or await page.query_selector("article")
         if main_content:
@@ -160,22 +160,44 @@ async def extract_content(page):
     except Exception as e:
         print(f"  ⚠️  Main/article selector failed: {e}")
     
-    # Strategy 2: Look for common content container patterns
-    content_selectors = [
-        'div[class*="content"]',
-        'div[class*="article"]',
+    # Strategy 2: Look for help center/knowledge base specific patterns
+    help_center_selectors = [
+        # Zendesk-style help centers (like FYI support)
+        'article[class*="article"]',
+        'div[class*="article-"]',
+        'div[class*="article-content"]',
         'div[class*="article-body"]',
-        'div[class*="main-content"]',
+        
+        # Xero-style documentation
+        'div[class*="content-"]',
+        'div[class*="article-content"]',
+        
+        # Common KB structures
+        'div[class*="kb-"]',
+        'div[class*="knowledge-"]',
+        'section[class*="article"]',
+        'section[class*="content"]',
+        
+        # Documentation sites
+        'div.docs-content',
+        'div.documentation',
+        'div[class*="docs"]',
+        
+        # General content containers
+        'div[class*="content"]',
+        'div[class*="main"]',
+        'div[id*="content"]',
+        'div[id*="main"]',
         '[data-testid*="content"]',
         '[data-testid*="article"]',
     ]
     
-    for selector in content_selectors:
+    for selector in help_center_selectors:
         try:
             element = await page.query_selector(selector)
             if element:
                 text = await element.text_content()
-                if text and len(text.strip()) > 500:
+                if text and len(text.strip()) > 300:
                     print(f"  ✓ Extracted from selector: {selector}")
                     return text.strip()
         except Exception:
@@ -978,7 +1000,7 @@ async def validate_bulk_scrape():
 
 @app.post("/scrape/bulk/stop")
 async def stop_bulk_scrape():
-    """Stop the currently running bulk scrape"""
+    """Stop currently running bulk scrape"""
     global bulk_status
     
     if not bulk_status["running"]:
