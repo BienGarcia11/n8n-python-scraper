@@ -4,6 +4,9 @@ supabase==2.3.4
 openai==1.12.0
 python-dotenv==1.0.0
 
+# HTTP requests - pinned to version compatible with Supabase
+httpx>=0.24.0,<2.0.0
+
 # Async HTTP
 aiohttp==3.9.1
 asyncio==3.4.3
