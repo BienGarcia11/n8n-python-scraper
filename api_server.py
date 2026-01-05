@@ -143,7 +143,7 @@ async def root():
             {
                 "path": "/validate-fix",
                 "method": "POST",
-                "description": "Automatically fix validation errors"
+                "description": "Fix validation errors (runs in background, returns immediately)"
             },
             {
                 "path": "/reset_to_pending",
@@ -241,20 +241,41 @@ async def validate():
     )
 
 
-@app.post("/validate-fix", response_model=ValidationFixResponse)
-async def validate_fix():
+@app.post("/validate-fix")
+async def validate_fix(background_tasks: BackgroundTasks):
     """
     Attempt to automatically fix validation errors.
+    Returns immediately with validation results, fixes in background.
     - For phantom completions: Re-scrape, generate embedding, and insert
     - For missing embeddings: Retrieve content, generate embedding, and update the row
     """
     issues = scraper.validate_data()
-    results = await scraper.fix_validation_issues(issues)
     
-    return ValidationFixResponse(
-        fixed=results['fixed'],
-        failed=results['failed']
-    )
+    # Start background task for fixing
+    background_tasks.add_task(run_validation_fixes, issues)
+    
+    # Return validation results immediately
+    return {
+        "message": "Validation fixes started in background",
+        "phantom_completions": issues['phantom_completions'],
+        "missing_embeddings": issues['missing_embeddings'],
+        "stuck_urls": issues['stuck_urls'],
+        "total_issues": len(issues['phantom_completions']) + len(issues['missing_embeddings']) + len(issues['stuck_urls'])
+    }
+
+
+async def run_validation_fixes(issues: Dict[str, Any]):
+    """Background task to process validation fixes."""
+    global scraping_active
+    
+    try:
+        scraping_active = True
+        results = await scraper.fix_validation_issues(issues)
+        print(f"Validation fixes completed: {results['fixed']} fixed, {results['failed']} failed")
+    except Exception as e:
+        print(f"Error in validation fixes: {e}")
+    finally:
+        scraping_active = False
 
 
 @app.post("/reset_to_pending", response_model=ResetResponse)

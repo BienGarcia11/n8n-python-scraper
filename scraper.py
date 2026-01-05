@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 from typing import Optional, Dict, Any
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext
 import openai
@@ -158,6 +159,8 @@ class WebScraper:
                 model="text-embedding-3-small",
                 input=text
             )
+            # Rate limiting: small delay after OpenAI API call
+            await asyncio.sleep(0.1)
             return response.data[0].embedding
         except Exception as e:
             print(f"Error generating embedding: {e}")
