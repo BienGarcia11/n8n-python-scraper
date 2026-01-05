@@ -443,11 +443,17 @@ class WebScraper:
         
         return results
 
-    def get_pending_urls(self, limit: int = 100) -> list:
+    def get_pending_urls(self, limit: Optional[int] = None) -> list:
         """
-        Get pending URLs from url_queue table.
+        Get ALL pending URLs from url_queue table.
+        If limit is None, gets all URLs (no limit).
         """
-        response = self.supabase.table('url_queue').select('url').eq('status', 'pending').limit(limit).execute()
+        if limit is None:
+            # Get all pending URLs without limit
+            response = self.supabase.table('url_queue').select('url').eq('status', 'pending').execute()
+        else:
+            # Use limit if specified
+            response = self.supabase.table('url_queue').select('url').eq('status', 'pending').limit(limit).execute()
         return [row['url'] for row in response.data]
 
     def update_url_status(self, url: str, status: str) -> None:
@@ -466,20 +472,20 @@ class WebScraper:
         """
         issues = {'phantom_completions': [], 'missing_embeddings': [], 'stuck_urls': []}
         
-        print("🔍 Starting fast validation (checking ALL URLs)...")
+        print("🔍 Starting complete validation (checking ALL URLs)...")
         
         # 1. Phantom Completions: URLs marked 'completed' but missing from documents
         print("  Checking for phantom completions (ALL completed URLs)...")
         try:
-            # Get all completed URLs (up to 5000)
-            completed_urls = self.supabase.table('url_queue').select('url').eq('status', 'completed').limit(5000).execute()
+            # Get ALL completed URLs (no limit)
+            completed_urls = self.supabase.table('url_queue').select('url').eq('status', 'completed').execute()
             
             if completed_urls.data:
-                # Get all document sources (up to 50000)
+                # Get all document sources (no limit)
                 all_urls = set(row['url'] for row in completed_urls.data)
                 
-                # Check documents for each completed URL in batches
-                docs_data = self.supabase.table('documents').select('metadata').limit(50000).execute()
+                # Check documents for each completed URL (no limit)
+                docs_data = self.supabase.table('documents').select('metadata').execute()
                 doc_sources = set()
                 for doc in docs_data.data:
                     metadata = doc.get('metadata', {})
@@ -504,8 +510,8 @@ class WebScraper:
         # 2. Missing Embeddings: Documents where embedding is NULL
         print("  Checking for missing embeddings (ALL documents)...")
         try:
-            # Get documents without embeddings (up to 5000)
-            missing_emb = self.supabase.table('documents').select('id').is_('embedding', 'null').limit(5000).execute()
+            # Get ALL documents without embeddings (no limit)
+            missing_emb = self.supabase.table('documents').select('id').is_('embedding', 'null').execute()
             if missing_emb.data:
                 issues['missing_embeddings'] = [row['id'] for row in missing_emb.data]
                 print(f"  ✓ Found {len(issues['missing_embeddings'])} documents without embeddings")
@@ -523,8 +529,8 @@ class WebScraper:
             from datetime import timedelta
             one_hour_ago = datetime.utcnow() - timedelta(hours=1)
             
-            # Get processing URLs (up to 5000)
-            processing_urls = self.supabase.table('url_queue').select('url, updated_at').eq('status', 'processing').limit(5000).execute()
+            # Get ALL processing URLs (no limit)
+            processing_urls = self.supabase.table('url_queue').select('url, updated_at').eq('status', 'processing').execute()
             
             if processing_urls.data:
                 # Filter by time (1 hour ago)

@@ -93,8 +93,8 @@ async def run_bulk_scrape(task_id: str):
             "cancelled": False
         }
         
-        # Get pending URLs
-        urls = scraper.get_pending_urls(limit=MAX_BULK_URLS)
+        # Get ALL pending URLs (pass None to get all, no limit)
+        urls = scraper.get_pending_urls(limit=None)
         
         if not urls:
             print("No pending URLs to process")
