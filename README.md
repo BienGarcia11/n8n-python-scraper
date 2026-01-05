@@ -222,10 +222,12 @@ railway domain
 
 The Dockerfile includes:
 - Railway-optimized browser launch arguments
-- System dependencies for Chromium
+- System dependencies for Chromium (manually installed to avoid Playwright dependency issues)
 - Non-root user for security
 - Health check endpoint monitoring
 - Proper port configuration via `PORT` environment variable
+
+**Note:** The Dockerfile manually installs required system dependencies instead of using `playwright install-deps` to avoid package conflicts on Railway's Metal builder.
 
 ## n8n Integration
 
