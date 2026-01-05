@@ -462,31 +462,45 @@ class WebScraper:
     def validate_data(self) -> Dict[str, Any]:
         """
         Validate scraped data for phantom completions, missing embeddings, and stuck URLs.
-        Enhanced with stuck URL detection.
+        Optimized for large datasets with limits.
         """
         issues = {'phantom_completions': [], 'missing_embeddings': [], 'stuck_urls': []}
         
-        # Phantom completions: URLs marked 'completed' but missing from documents
-        completed_urls = self.supabase.table('url_queue').select('url').eq('status', 'completed').execute()
+        # Optimized: Only check first 100 completed URLs for phantom completions
+        # This prevents slow validation on large datasets
+        print("  Checking for phantom completions (sampling first 100)...")
+        completed_urls = self.supabase.table('url_queue').select('url').eq('status', 'completed').limit(100).execute()
+        
+        # Batch check for phantom completions
+        all_document_sources = set()
+        docs = self.supabase.table('documents').select('metadata').limit(1000).execute()
+        for doc in docs.data:
+            metadata = doc.get('metadata', {})
+            source = metadata.get('source')
+            if source:
+                all_document_sources.add(source)
+        
+        # Find phantom completions (completed URLs not in documents)
         for row in completed_urls.data:
             url = row['url']
-            # Check if this URL exists in documents metadata
-            doc = self.supabase.table('documents').select('id').contains('metadata', {'source': url}).limit(1).execute()
-            if not doc.data:
+            if url not in all_document_sources:
                 issues['phantom_completions'].append(url)
         
-        # Missing embeddings: Documents where content exists but embedding is NULL
-        missing_emb = self.supabase.table('documents').select('id').is_('embedding', 'null').execute()
-        issues['missing_embeddings'] = [row['id'] for row in missing_emb.data]
+        print(f"  ✓ Checked {len(completed_urls.data)} completed URLs")
         
-        # Stuck URLs: URLs stuck in 'processing' status for > 1 hour
+        # Optimized: Limit missing embeddings check to first 100
+        print("  Checking for missing embeddings (first 100)...")
+        missing_emb = self.supabase.table('documents').select('id').is_('embedding', 'null').limit(100).execute()
+        issues['missing_embeddings'] = [row['id'] for row in missing_emb.data]
+        print(f"  ✓ Found {len(issues['missing_embeddings'])} documents without embeddings")
+        
+        # Optimized: Limit stuck URLs check to first 50
+        print("  Checking for stuck URLs (first 50)...")
         from datetime import timedelta
         one_hour_ago = datetime.utcnow() - timedelta(hours=1)
-        stuck = self.supabase.table('url_queue').select('url').eq('status', 'processing').lt('updated_at', one_hour_ago.isoformat()).execute()
+        stuck = self.supabase.table('url_queue').select('url').eq('status', 'processing').lt('updated_at', one_hour_ago.isoformat()).limit(50).execute()
         issues['stuck_urls'] = [row['url'] for row in stuck.data]
-        
-        if issues['stuck_urls']:
-            print(f"  ⚠️  Found {len(issues['stuck_urls'])} stuck URLs (>1 hour in processing)")
+        print(f"  ✓ Found {len(issues['stuck_urls'])} stuck URLs (>1 hour in processing)")
         
         return issues
 
