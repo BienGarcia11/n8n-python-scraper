@@ -10,7 +10,7 @@ class Config:
     
     # Supabase
     SUPABASE_URL = os.getenv('SUPABASE_URL')
-    SUPABASE_SERVICE_KEY = os.getenv('SUPABASE_SERVICE_KEY')
+    SUPABASE_SERVICE_KEY = os.getenv('SUPABASE_KEY')  # Using SUPABASE_KEY to match existing setup
     
     # OpenAI
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')

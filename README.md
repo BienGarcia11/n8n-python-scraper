@@ -90,7 +90,7 @@ Create a `.env` file with the following variables:
 ```env
 # Supabase Configuration
 SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_KEY=your-service-role-key-here
+SUPABASE_KEY=your-supabase-key-here
 
 # OpenAI Configuration
 OPENAI_API_KEY=your-openai-api-key-here
