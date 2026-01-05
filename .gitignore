@@ -20,16 +20,10 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual Environment
-venv/
-env/
-ENV/
-.venv
-
 # Environment variables
 .env
 
-# IDE
+# IDEs
 .vscode/
 .idea/
 *.swp
@@ -40,12 +34,10 @@ ENV/
 .DS_Store
 Thumbs.db
 
+# Logs
+*.log
+logs/
+
 # Playwright
 .playwright/
 ms-playwright/
-
-# Logs
-*.log
-
-# Railway
-railway-*

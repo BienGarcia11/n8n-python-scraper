@@ -1,314 +1,228 @@
-# Bulk Web Scraper for RAG
+# RAG System Web Scraper
 
-A high-performance web scraping service built with Playwright, designed for RAG (Retrieval-Augmented Generation) systems. Features automatic content expansion, OpenAI embeddings generation, and Supabase integration.
+A robust, async web scraper that fetches URLs from a Supabase queue, scrapes content using Playwright, generates OpenAI embeddings, and stores the results in a Supabase documents table for RAG systems.
 
 ## Features
 
-- **Playwright-based Scraping**: Robust content extraction with multi-step fallback strategy
-- **Automatic Content Expansion**: Expands hidden content (accordions, dropdowns, tabs)
-- **RAG Integration**: Automatic embedding generation using OpenAI's text-embedding-3-small
-- **Concurrent Processing**: Process 2-3 URLs concurrently with semaphore control
-- **Validation System**: Detects phantom completions, missing embeddings, and stuck jobs
-- **Railway Ready**: Optimized Docker configuration for Railway deployment
-- **n8n Integration**: HTTP webhooks for seamless workflow automation
+- **Playwright-based scraping**: Fast, reliable web scraping with JavaScript rendering
+- **OpenAI embeddings**: Automatically generates embeddings for scraped content
+- **Async processing**: Concurrent URL processing for efficiency
+- **Error handling**: Automatic retries with exponential backoff
+- **Batch processing**: Processes URLs in configurable batches
+- **Status tracking**: Tracks each URL's status (pending, processing, completed, failed)
+- **Docker-ready**: Containerized for easy deployment on Railway
+- **Logging**: Comprehensive logging for monitoring and debugging
 
 ## Architecture
 
-### Reference Code Blocks (Preserved from Previous System)
+1. **URL Queue**: Reads URLs from Supabase `url_queue` table where `status = 'pending'`
+2. **Scraping**: Uses Playwright to scrape web pages and extract content
+3. **Content Processing**: Cleans HTML, extracts metadata, and prepares text
+4. **Embedding Generation**: Sends content to OpenAI for embedding generation
+5. **Document Storage**: Inserts scraped content and embeddings into Supabase `documents` table
+6. **Status Updates**: Updates URL status throughout the process
 
-- **A. Expand Hidden Content**: Multi-pass expansion with common selectors
-- **B. Browser Launch Args**: Railway-optimized Chromium arguments
-- **C. Cookie Handling**: Automatic cookie consent dialog dismissal
-- **D. 4-Step Extraction**: Smart content extraction with fallbacks
+## Prerequisites
 
-### Database Schema
-
-**url_queue** (Source Table)
-- `id`: Bigint primary key
-- `url`: Text (unique)
-- `status`: Text ('pending', 'processing', 'completed', 'failed')
-- `created_at`: Timestamp with timezone
-- `updated_at`: Timestamp with timezone
-
-**documents** (Destination Table)
-- `id`: Bigint primary key
-- `content`: Text (full cleaned text)
-- `metadata`: JSONB (source URL, title)
-- `embedding`: Vector (pgvector, 1536 dimensions)
-- `created_at`: Timestamp with timezone
-- `updated_at`: Timestamp with timezone
-
-## API Endpoints
-
-### `GET /health_check`
-Returns service status and version.
-
-**Response:**
-```json
-{
-  "status": "healthy",
-  "service": "bulk-web-scraper",
-  "version": "1.0.0"
-}
-```
-
-### `POST /start_bulk_scrape`
-Begin the scraping job. Responds immediately, processes in background.
-
-**Response:**
-```json
-{
-  "message": "Bulk scrape started for 50 URLs",
-  "urls_queued": 50
-}
-```
-
-### `GET /scraping_status`
-Check the status of the queue and current job.
-
-**Response:**
-```json
-{
-  "is_scraping": true,
-  "pending_count": 30,
-  "processing_count": 5,
-  "completed_count": 15,
-  "failed_count": 0
-}
-```
-
-### `GET /validate`
-Run validation checks on the scraped data.
-
-**Response:**
-```json
-{
-  "phantom_completions": ["https://example.com/page1"],
-  "missing_embeddings": [1, 2, 3],
-  "stuck_urls": ["https://example.com/page2"],
-  "total_issues": 4
-}
-```
-
-### `POST /validate-fix`
-Automatically fix validation errors.
-
-**Response:**
-```json
-{
-  "fixed": 3,
-  "failed": 1
-}
-```
-
-### `POST /reset_to_pending`
-Reset URLs in the queue back to 'pending' status.
-
-**Response:**
-```json
-{
-  "message": "Reset 10 URLs to pending status",
-  "reset_count": 10
-}
-```
-
-### `POST /stop_scraping_work`
-Immediately terminate any active scraping processes.
-
-**Response:**
-```json
-{
-  "message": "Scraping process termination requested",
-  "success": true
-}
-```
-
-## Environment Variables
-
-Create a `.env` file (or configure in Railway):
-
-```env
-# Required
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_KEY=your-supabase-service-role-key
-OPENAI_API_KEY=sk-your-openai-api-key
-
-# Optional
-MAX_BULK_URLS=100  # Default: 100
-
-# Railway (automatically set)
-PORT=8000
-```
-
-## Local Development
-
-### Prerequisites
-- Python 3.12+
-- Supabase project with pgvector extension
+- Python 3.11+
+- Supabase project with `url_queue` and `documents` tables
 - OpenAI API key
+- Railway account (for deployment) or local environment
 
-### Setup
+## Database Schema
 
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd <repository-name>
+### url_queue table
+```sql
+- id (bigint, primary key)
+- url (text, unique)
+- status (text, default: 'pending')
+- created_at (timestamptz)
+- updated_at (timestamptz)
+- error_message (text, optional)
 ```
 
-2. Create virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+### documents table
+```sql
+- id (bigint, primary key)
+- content (text)
+- metadata (jsonb)
+- embedding (vector)
+- created_at (timestamptz)
+- updated_at (timestamptz)
 ```
 
-3. Install dependencies:
+## Setup
+
+### 1. Clone the repository
+```bash
+git clone https://github.com/BienGarcia11/n8n-python-scraper.git
+cd n8n-python-scraper
+```
+
+### 2. Install dependencies
 ```bash
 pip install -r requirements.txt
 playwright install chromium
 ```
 
-4. Configure environment variables:
+### 3. Configure environment variables
+Copy `.env.example` to `.env` and fill in your credentials:
+
 ```bash
 cp .env.example .env
-# Edit .env with your credentials
 ```
 
-5. Run the server:
+Edit `.env`:
+```env
+# Supabase Configuration
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your_service_role_key
+
+# OpenAI Configuration
+OPENAI_API_KEY=your_openai_api_key
+EMBEDDING_MODEL=text-embedding-3-small
+
+# Scraper Configuration
+BATCH_SIZE=10
+MAX_RETRIES=3
+SCRAPER_TIMEOUT=30000
+```
+
+**Important**: Use the **service_role** key from Supabase, not the anon key, as the scraper needs write access.
+
+### 4. Run locally
 ```bash
-python api_server.py
+python scraper.py
 ```
-
-The server will start on `http://localhost:8000`
 
 ## Railway Deployment
 
-### Prerequisites
-- Railway account
-- Supabase project credentials
-- OpenAI API key
-
-### Setup
-
-1. Install Railway CLI:
+### 1. Create Railway account and install CLI
 ```bash
 npm install -g @railway/cli
 railway login
 ```
 
-2. Link to Railway:
+### 2. Initialize Railway project
 ```bash
 railway init
 ```
 
-3. Set environment variables:
+### 3. Set environment variables
 ```bash
 railway variables set SUPABASE_URL=https://your-project.supabase.co
-railway variables set SUPABASE_KEY=your-supabase-service-role-key
-railway variables set OPENAI_API_KEY=sk-your-openai-api-key
-railway variables set MAX_BULK_URLS=100
+railway variables set SUPABASE_KEY=your_service_role_key
+railway variables set OPENAI_API_KEY=your_openai_api_key
+railway variables set EMBEDDING_MODEL=text-embedding-3-small
+railway variables set BATCH_SIZE=10
+railway variables set MAX_RETRIES=3
+railway variables set SCRAPER_TIMEOUT=30000
 ```
 
-4. Deploy:
+### 4. Deploy
 ```bash
 railway up
 ```
 
-5. Get the deployed URL:
+### 5. Monitor deployment
 ```bash
-railway domain
+railway logs
 ```
 
-### Railway-Specific Optimizations
+## Configuration Options
 
-The Dockerfile includes:
-- Railway-optimized browser launch arguments
-- System dependencies for Chromium (manually installed to avoid Playwright dependency issues)
-- Non-root user for security
-- Health check endpoint monitoring
-- Proper port configuration via `PORT` environment variable
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SUPABASE_URL` | Supabase project URL | Required |
+| `SUPABASE_KEY` | Supabase service role key | Required |
+| `OPENAI_API_KEY` | OpenAI API key | Required |
+| `EMBEDDING_MODEL` | OpenAI embedding model | `text-embedding-3-small` |
+| `BATCH_SIZE` | URLs processed per batch | `10` |
+| `MAX_RETRIES` | Max retry attempts per URL | `3` |
+| `SCRAPER_TIMEOUT` | Page load timeout (ms) | `30000` |
 
-**Note:** The Dockerfile manually installs required system dependencies instead of using `playwright install-deps` to avoid package conflicts on Railway's Metal builder.
+## Usage
 
-## n8n Integration
+### Adding URLs to the queue
+```sql
+INSERT INTO url_queue (url, status) VALUES 
+('https://example.com/article1', 'pending'),
+('https://example.com/article2', 'pending');
+```
 
-This service is designed to work seamlessly with n8n workflows via HTTP Request nodes.
+### Running the scraper
+The scraper will:
+1. Fetch URLs with status `pending`
+2. Mark them as `processing`
+3. Scrape each URL with Playwright
+4. Generate OpenAI embeddings
+5. Insert into `documents` table
+6. Mark URLs as `completed` or `failed`
 
-### Example n8n Workflow
+### Monitoring progress
+Check the `url_queue` table:
+```sql
+SELECT status, COUNT(*) FROM url_queue GROUP BY status;
+```
 
-1. **HTTP Request - Start Scraping**
-   - Method: POST
-   - URL: `{{RAILWAY_URL}}/start_bulk_scrape`
-   - Response: URLs queued count
+### Viewing scraped documents
+```sql
+SELECT id, metadata->>'title' as title, metadata->>'url' as url, created_at 
+FROM documents 
+ORDER BY created_at DESC 
+LIMIT 10;
+```
 
-2. **Wait / Poll**
-   - Wait: 10 seconds
-   - Loop 20 times
+## Performance Optimization
 
-3. **HTTP Request - Check Status**
-   - Method: GET
-   - URL: `{{RAILWAY_URL}}/scraping_status`
-   - Response: Queue counts
+### For high-volume scraping (1000+ URLs):
+- Increase `BATCH_SIZE` to 20-50
+- Consider running multiple scraper instances
+- Use Railway's automatic scaling
+- Monitor OpenAI API rate limits
 
-4. **HTTP Request - Validate**
-   - Method: GET
-   - URL: `{{RAILWAY_URL}}/validate`
-   - Response: Validation issues
-
-5. **HTTP Request - Fix Issues** (if issues found)
-   - Method: POST
-   - URL: `{{RAILWAY_URL}}/validate-fix`
-   - Response: Fix results
-
-## Token Limits
-
-The embedding model `text-embedding-3-small` has an 8,191 token limit. The scraper automatically truncates text to approximately 32,000 characters (4 chars per token estimate) to stay within limits.
-
-## Scraping Strategy
-
-The 4-step content extraction strategy:
-
-1. **Main/Article**: Look for `<main>` or `<article>` elements
-2. **Help Center**: Look for article/docs class selectors
-3. **Body Fallback**: Remove nav/header/footer via JavaScript
-4. **Last Resort**: Get all body text
-
-Each step includes a fallback to the next if no content is found.
+### For memory-constrained environments:
+- Reduce `BATCH_SIZE` to 5
+- Reduce `SCRAPER_TIMEOUT`
+- Use lighter Playwright configuration
 
 ## Troubleshooting
 
-### Scraping fails with "no content found"
-- Check if the website blocks automated access
-- Verify the URL is accessible
-- Check browser launch arguments in `scraper.py`
+### Scraper stops processing
+- Check logs: `railway logs`
+- Verify database connection
+- Check OpenAI API quota
+- Review failed URLs in `url_queue` table
 
-### Embeddings generation fails
-- Verify OPENAI_API_KEY is correct
-- Check OpenAI API quota and rate limits
-- Ensure text doesn't exceed token limits
+### Timeout errors
+- Increase `SCRAPER_TIMEOUT`
+- Check URL accessibility
+- Verify network connectivity
 
-### Railway deployment issues
-- Check Railway logs: `railway logs`
-- Verify all environment variables are set
-- Ensure PORT variable is not manually set (Railway sets it)
+### Memory issues
+- Reduce `BATCH_SIZE`
+- Use Railway's larger plans
+- Consider rate limiting
 
-### Validation issues
-- Phantom completions: URLs marked 'completed' but missing from documents
-- Missing embeddings: Documents with content but NULL embedding column
-- Stuck URLs: URLs in 'processing' status for > 1 hour
+## Error Handling
 
-Use `/validate-fix` endpoint to automatically resolve these issues.
+The scraper implements:
+- **Automatic retries**: Up to 3 attempts per URL with exponential backoff
+- **Status tracking**: Each URL's status is updated throughout the process
+- **Error logging**: All errors are logged with context
+- **Graceful shutdown**: Proper cleanup on termination
 
-## Performance
+## Contributing
 
-- **Concurrency**: 2-3 URLs processed simultaneously
-- **Timeout**: 30 seconds per URL
-- **Browser**: Chromium with Railway-optimized arguments
-- **Memory**: Efficient memory usage with proper cleanup
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-MIT
+MIT License - see LICENSE file for details
 
 ## Support
 
-For issues and questions, please refer to the project documentation or create an issue in the repository.
+For issues and questions:
+- Open an issue on GitHub
+- Check Railway logs for runtime errors
+- Review Supabase logs for database issues
