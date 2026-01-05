@@ -13,15 +13,12 @@ RUN apt-get update && apt-get install -y \
     npm \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Playwright browsers
-RUN npx -y playwright install chromium
-
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright Python browsers
-RUN playwright install chromium
+RUN playwright install chromium --with-deps
 
 # Copy application code
 COPY scraper.py .
