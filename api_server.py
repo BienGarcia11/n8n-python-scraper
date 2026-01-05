@@ -306,15 +306,25 @@ async def scraping_status():
     """
     Check the status of the queue and current job.
     Returns task_id and detailed progress.
+    Runs in thread pool to avoid blocking other requests.
     """
     from supabase import create_client
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     
-    # Get counts from url_queue
-    pending = supabase.table('url_queue').select('id', count='exact').eq('status', 'pending').execute()
-    processing = supabase.table('url_queue').select('id', count='exact').eq('status', 'processing').execute()
-    completed = supabase.table('url_queue').select('id', count='exact').eq('status', 'completed').execute()
-    failed = supabase.table('url_queue').select('id', count='exact').eq('status', 'failed').execute()
+    # Run blocking database queries in thread pool
+    def get_counts():
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        pending = supabase.table('url_queue').select('id', count='exact').eq('status', 'pending').execute()
+        processing = supabase.table('url_queue').select('id', count='exact').eq('status', 'processing').execute()
+        completed = supabase.table('url_queue').select('id', count='exact').eq('status', 'completed').execute()
+        failed = supabase.table('url_queue').select('id', count='exact').eq('status', 'failed').execute()
+        return {
+            'pending': pending.count if hasattr(pending, 'count') else 0,
+            'processing': processing.count if hasattr(processing, 'count') else 0,
+            'completed': completed.count if hasattr(completed, 'count') else 0,
+            'failed': failed.count if hasattr(failed, 'count') else 0
+        }
+    
+    counts = await asyncio.to_thread(get_counts)
     
     # Find current running task
     current_task_id = None
@@ -346,13 +356,16 @@ async def scraping_status():
 @app.get("/validate", response_model=ValidationResponse)
 async def validate():
     """
-    Run validation checks on the scraped data.
+    Run validation checks on scraped data.
     Detects:
     - Phantom Completions: URLs in url_queue marked 'completed' but missing from documents
     - Missing Embeddings: Documents where content exists but embedding is NULL
     - Stuck URLs: URLs stuck in 'processing' status for > 1 hour
+    
+    Runs in thread pool to avoid blocking other requests.
     """
-    issues = scraper.validate_data()
+    # Run blocking validation in thread pool to avoid blocking event loop
+    issues = await asyncio.to_thread(scraper.validate_data)
     
     total_issues = len(issues['phantom_completions']) + len(issues['missing_embeddings']) + len(issues['stuck_urls'])
     
@@ -397,32 +410,40 @@ async def reset_to_pending():
     """
     Reset URLs in the queue back to 'pending' status.
     Resets all 'failed' and 'processing' URLs to 'pending'.
+    Runs in thread pool to avoid blocking other requests.
     """
     from supabase import create_client
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     
-    # Count URLs to reset
-    failed_count = supabase.table('url_queue').select('id', count='exact').eq('status', 'failed').execute()
-    processing_count = supabase.table('url_queue').select('id', count='exact').eq('status', 'processing').execute()
+    # Run blocking database operations in thread pool
+    def reset_urls():
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        
+        # Count URLs to reset
+        failed_count = supabase.table('url_queue').select('id', count='exact').eq('status', 'failed').execute()
+        processing_count = supabase.table('url_queue').select('id', count='exact').eq('status', 'processing').execute()
+        
+        total_count = (failed_count.count if hasattr(failed_count, 'count') else 0) + \
+                      (processing_count.count if hasattr(processing_count, 'count') else 0)
+        
+        # Reset failed URLs
+        supabase.table('url_queue').update({
+            'status': 'pending',
+            'updated_at': 'now()'
+        }).eq('status', 'failed').execute()
+        
+        # Reset processing URLs
+        supabase.table('url_queue').update({
+            'status': 'pending',
+            'updated_at': 'now()'
+        }).eq('status', 'processing').execute()
+        
+        return total_count
     
-    total_count = (failed_count.count if hasattr(failed_count, 'count') else 0) + \
-                  (processing_count.count if hasattr(processing_count, 'count') else 0)
-    
-    # Reset failed URLs
-    supabase.table('url_queue').update({
-        'status': 'pending',
-        'updated_at': 'now()'
-    }).eq('status', 'failed').execute()
-    
-    # Reset processing URLs
-    supabase.table('url_queue').update({
-        'status': 'pending',
-        'updated_at': 'now()'
-    }).eq('status', 'processing').execute()
+    reset_count = await asyncio.to_thread(reset_urls)
     
     return ResetResponse(
-        message=f"Reset {total_count} URLs to pending status",
-        reset_count=total_count
+        message=f"Reset {reset_count} URLs to pending status",
+        reset_count=reset_count
     )
 
 
