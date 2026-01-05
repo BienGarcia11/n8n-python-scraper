@@ -14,6 +14,7 @@ load_dotenv()
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+REDIS_URL = os.getenv('REDIS_URL')  # Optional Redis for caching
 MAX_BULK_URLS = int(os.getenv('MAX_BULK_URLS', '100'))
 PORT = int(os.getenv('PORT', '8000'))
 
@@ -25,7 +26,7 @@ if not all([SUPABASE_URL, SUPABASE_KEY, OPENAI_API_KEY]):
 app = FastAPI(title="Bulk Web Scraper for RAG", version="1.0.0")
 
 # Initialize scraper
-scraper = WebScraper(SUPABASE_URL, SUPABASE_KEY, OPENAI_API_KEY)
+scraper = WebScraper(SUPABASE_URL, SUPABASE_KEY, OPENAI_API_KEY, REDIS_URL)
 
 # Global state for background tasks with task_id system
 task_status: Dict[str, Dict[str, Any]] = {}

@@ -1,6 +1,8 @@
 import asyncio
 import os
 import time
+import hashlib
+import json
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext
@@ -8,11 +10,12 @@ import openai
 from supabase import create_client, Client
 import trafilatura
 import html2text
+import redis
 
 
 class WebScraper:
-    def __init__(self, supabase_url: str, supabase_key: str, openai_key: str):
-        """Initialize web scraper with Supabase and OpenAI credentials."""
+    def __init__(self, supabase_url: str, supabase_key: str, openai_key: str, redis_url: Optional[str] = None):
+        """Initialize web scraper with Supabase, OpenAI, and optional Redis."""
         self.supabase: Client = create_client(supabase_url, supabase_key)
         self.openai_client = openai.AsyncOpenAI(api_key=openai_key)
         self.is_running = False
@@ -23,6 +26,73 @@ class WebScraper:
         self.context: Optional[BrowserContext] = None
         self.request_count = 0
         self.browser_restart_interval = 30  # Restart every 30 URLs
+        
+        # Redis caching (optional)
+        self.redis_client: Optional[redis.Redis] = None
+        self.use_cache = False
+        
+        if redis_url:
+            try:
+                self.redis_client = redis.from_url(redis_url, decode_responses=True)
+                # Test connection
+                self.redis_client.ping()
+                self.use_cache = True
+                print("✅ Redis cache connected")
+            except Exception as e:
+                print(f"⚠️  Redis connection failed: {e} (caching disabled)")
+                self.redis_client = None
+        else:
+            print("ℹ️  Redis not configured (caching disabled)")
+    
+    def _get_cache_key(self, prefix: str, data: str) -> str:
+        """Generate cache key with prefix and hash."""
+        hash_val = hashlib.md5(data.encode()).hexdigest()
+        return f"{prefix}:{hash_val}"
+    
+    def _cache_get(self, key: str) -> Optional[Any]:
+        """Get value from Redis cache."""
+        if not self.use_cache or not self.redis_client:
+            return None
+        try:
+            value = self.redis_client.get(key)
+            if value:
+                return json.loads(value)
+        except Exception:
+            pass
+        return None
+    
+    def _cache_set(self, key: str, value: Any, ttl: int = 86400):
+        """Set value in Redis cache with TTL (default 24h)."""
+        if not self.use_cache or not self.redis_client:
+            return
+        try:
+            self.redis_client.setex(key, ttl, json.dumps(value))
+        except Exception as e:
+            print(f"⚠️  Redis cache set failed: {e}")
+    
+    async def generate_embeddings_batch(self, texts: List[str]) -> List[Optional[list]]:
+        """
+        Generate embeddings for multiple texts in one API call (Phase 1).
+        Batches up to 2048 texts (OpenAI limit).
+        """
+        if not texts:
+            return []
+        
+        # Truncate each text to avoid exceeding token limit
+        max_chars = 32000
+        truncated_texts = [t[:max_chars] if len(t) > max_chars else t for t in texts]
+        
+        try:
+            response = await self.openai_client.embeddings.create(
+                model="text-embedding-3-small",
+                input=truncated_texts
+            )
+            # Rate limiting: small delay after OpenAI API call
+            await asyncio.sleep(0.1)
+            return [item.embedding for item in response.data]
+        except Exception as e:
+            print(f"  ⚠️  Batch embedding failed: {e}")
+            raise
         
     async def get_browser_context(self) -> BrowserContext:
         """Get or create browser context with automatic restart."""
@@ -425,61 +495,103 @@ class WebScraper:
     async def process_urls(self, urls: list, max_concurrent: int = 3) -> Dict[str, Any]:
         """
         Process multiple URLs concurrently with semaphore limit.
+        Uses batched embeddings for efficiency (Phase 1).
         Checks for cancellation and stops immediately when requested.
         """
         semaphore = asyncio.Semaphore(max_concurrent)
-        results = {'success': [], 'failed': []}
+        scraped_data = []
         cancelled = False
         
-        async def process_with_semaphore(url: str):
+        # Phase 1: Scrape all URLs concurrently (collect data first)
+        async def scrape_with_semaphore(url: str):
             nonlocal cancelled
             
             # Skip if already cancelled
             if cancelled:
-                return
+                return None
                 
             async with semaphore:
                 # Check for cancellation before processing
                 if self.cancel_requested:
                     cancelled = True
-                    return
+                    return None
                     
                 try:
-                    # Scrape URL with retry logic
+                    # Scrape URL without embedding (will do in batch)
                     data = await self.scrape_url(url, max_retries=3)
-                    
-                    # Skip if cancelled during scraping
-                    if data is None:
-                        return
-                        
-                    if data['status'] == 'success':
-                        # Insert or update document (with duplicate detection)
+                    return data
+                except Exception as e:
+                    if not self.cancel_requested:
+                        print(f"  ❌ Failed to scrape {url}: {e}")
+                    return None
+        
+        # Create scraping tasks
+        scrape_tasks = [scrape_with_semaphore(url) for url in urls]
+        
+        try:
+            # Gather all scraped data
+            scraped_results = await asyncio.gather(*scrape_tasks, return_exceptions=True)
+        except asyncio.CancelledError:
+            print("  ⏹️  Processing cancelled by stop request")
+            cancelled = True
+            return {'success': [], 'failed': []}
+        
+        # Filter out cancellations and errors
+        for result in scraped_results:
+            if result is not None and not isinstance(result, Exception):
+                scraped_data.append(result)
+        
+        # Phase 2: Batch generate embeddings (Phase1 efficiency)
+        successful_data = [d for d in scraped_data if d and d.get('status') == 'success']
+        failed_data = [d for d in scraped_data if d and d.get('status') != 'success']
+        
+        scraped_data_urls = []
+        
+        if successful_data:
+            print(f"  🔄 Generating {len(successful_data)} embeddings in batch...")
+            try:
+                # Batch generate embeddings (up to 2048 at once)
+                texts = [d['content'] for d in successful_data]
+                embeddings = await self.generate_embeddings_batch(texts)
+                
+                # Assign embeddings back to data
+                for i, data in enumerate(successful_data):
+                    if i < len(embeddings):
+                        data['embedding'] = embeddings[i]
+                        # Insert or update document
                         self.insert_or_update_document(
                             data['url'],
                             data['content'],
                             data['title'],
                             data['embedding']
                         )
-                        results['success'].append(url)
-                    else:
-                        results['failed'].append(url)
-                except Exception as e:
-                    if not self.cancel_requested:
-                        print(f"  ❌ Failed to process {url}: {e}")
-                        results['failed'].append(url)
+                        scraped_data_urls.append(data['url'])
+                    
+                print(f"  ✓ Batch embeddings complete: {len(scraped_data_urls)} documents saved")
+            except Exception as e:
+                print(f"  ⚠️  Batch embedding failed, falling back to individual: {e}")
+                # Fallback to individual embeddings
+                for data in successful_data:
+                    try:
+                        embedding = await self.generate_embedding(data['content'])
+                        self.insert_or_update_document(
+                            data['url'],
+                            data['content'],
+                            data['title'],
+                            embedding
+                        )
+                        scraped_data_urls.append(data['url'])
+                    except Exception:
+                        self.update_url_status(data['url'], 'failed')
         
-        # Create tasks
-        tasks = [process_with_semaphore(url) for url in urls]
+        # Update status for failed URLs
+        for data in failed_data:
+            self.update_url_status(data['url'], 'failed')
         
-        # Process tasks and handle cancellation
-        try:
-            # Gather all tasks
-            await asyncio.gather(*tasks, return_exceptions=True)
-        except asyncio.CancelledError:
-            print("  ⏹️  Processing cancelled by stop request")
-            cancelled = True
-        
-        return results
+        return {
+            'success': scraped_data_urls,
+            'failed': [d['url'] for d in failed_data]
+        }
 
     async def process_urls_batched(self, max_concurrent: int = 3, batch_size: int = 30) -> Dict[str, Any]:
         """
