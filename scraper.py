@@ -1,18 +1,90 @@
 import asyncio
 import os
 import time
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+from datetime import datetime
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext
 import openai
 from supabase import create_client, Client
+import trafilatura
+import html2text
 
 
 class WebScraper:
     def __init__(self, supabase_url: str, supabase_key: str, openai_key: str):
-        """Initialize the web scraper with Supabase and OpenAI credentials."""
+        """Initialize web scraper with Supabase and OpenAI credentials."""
         self.supabase: Client = create_client(supabase_url, supabase_key)
         self.openai_client = openai.AsyncOpenAI(api_key=openai_key)
         self.is_running = False
+        
+        # Browser management
+        self.browser: Optional[Browser] = None
+        self.context: Optional[BrowserContext] = None
+        self.request_count = 0
+        self.browser_restart_interval = 30  # Restart every 30 URLs
+        
+    async def get_browser_context(self) -> BrowserContext:
+        """Get or create browser context with automatic restart."""
+        if self.request_count >= self.browser_restart_interval:
+            print(f"🔄 Restarting browser (URLs processed: {self.request_count})")
+            await self.restart_browser()
+            self.request_count = 0
+            return self.context
+            
+        if self.context is None:
+            print("🌐 Initializing browser context...")
+            await self.initialize_browser()
+            print("✅ Browser context ready")
+            
+        return self.context
+    
+    async def initialize_browser(self):
+        """Initialize browser with Railway-optimized arguments."""
+        playwright = await async_playwright().start()
+        
+        # Reference B - Browser launch args for Railway
+        self.browser = await playwright.chromium.launch(
+            args=[
+                "--disable-dev-shm-usage",
+                "--disable-setuid-sandbox",
+                "--no-sandbox",
+                "--disable-gpu",
+                "--no-zygote",
+                "--single-process"
+            ]
+        )
+        
+        self.context = await self.browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            viewport={'width': 1920, 'height': 1080}
+        )
+    
+    async def restart_browser(self):
+        """Restart browser to clear memory."""
+        try:
+            if self.context:
+                await self.context.close()
+            if self.browser:
+                await self.browser.close()
+            print("✅ Browser closed for restart")
+        except Exception as e:
+            print(f"⚠️  Error closing browser: {e}")
+        
+        await self.initialize_browser()
+        print("✅ Browser restarted")
+        
+    async def close_browser(self):
+        """Close browser and cleanup."""
+        try:
+            if self.context:
+                await self.context.close()
+            if self.browser:
+                await self.browser.close()
+        except Exception as e:
+            print(f"⚠️  Error closing browser: {e}")
+        
+        self.context = None
+        self.browser = None
         
     async def expand_all_content(self, page: Page) -> None:
         """
@@ -82,9 +154,55 @@ class WebScraper:
                 cookie_button = await page.query_selector(selector, timeout=2000)
                 if cookie_button:
                     await cookie_button.click()
+                    print("  ✓ Cookie banner dismissed")
                     break
         except Exception:
             pass
+
+    def extract_content_html(self, html_content: str) -> str:
+        """
+        Extract main content using trafilatura, fallback to html2text.
+        Improved extraction from old system.
+        """
+        # Try trafilatura first - handles most sites well
+        extracted = trafilatura.extract(
+            html_content,
+            include_links=True,
+            include_formatting=True,
+            include_tables=True,
+            no_fallback=False,
+        )
+        
+        # If trafilatura extracted meaningful content, use it
+        if extracted and len(extracted.strip()) > 200:
+            return extracted.strip()
+        
+        # Fallback to html2text for pages trafilatura can't parse
+        h = html2text.HTML2Text()
+        h.ignore_links = False
+        h.ignore_images = True
+        h.ignore_emphasis = False
+        h.body_width = 0  # Don't wrap lines
+        
+        fallback_content = h.handle(html_content)
+        
+        # Basic cleanup for fallback
+        lines = fallback_content.split('\n')
+        cleaned_lines = []
+        for line in lines:
+            stripped = line.strip()
+            # Skip common junk patterns
+            if stripped and not any([
+                stripped.startswith('Skip to'),
+                stripped.startswith('Cookie'),
+                stripped.startswith('Accept all'),
+                'privacy policy' in stripped.lower(),
+                'terms of service' in stripped.lower(),
+                len(stripped) < 3,
+            ]):
+                cleaned_lines.append(line)
+        
+        return '\n'.join(cleaned_lines).strip()
 
     async def extract_content_4step(self, page: Page) -> Optional[str]:
         """
@@ -95,8 +213,10 @@ class WebScraper:
         try:
             main_element = await page.query_selector('main, article')
             if main_element:
-                content = await main_element.text_content()
+                html = await main_element.inner_html()
+                content = self.extract_content_html(html)
                 if content and len(content.strip()) > 100:
+                    print("  ✓ Extracted from main/article element")
                     return content.strip()
         except Exception:
             pass
@@ -112,31 +232,37 @@ class WebScraper:
             for selector in help_selectors:
                 element = await page.query_selector(selector)
                 if element:
-                    content = await element.text_content()
+                    html = await element.inner_html()
+                    content = self.extract_content_html(html)
                     if content and len(content.strip()) > 100:
+                        print(f"  ✓ Extracted from selector: {selector}")
                         return content.strip()
         except Exception:
             pass
             
         # Step 3: Body fallback (remove nav/header/footer via JS)
         try:
-            content = await page.evaluate('''() => {
+            html = await page.evaluate('''() => {
                 const clone = document.body.cloneNode(true);
                 const selectorsToRemove = ['nav', 'header', 'footer', '[role="navigation"]', '.nav', '.header', '.footer'];
                 selectorsToRemove.forEach(selector => {
                     clone.querySelectorAll(selector).forEach(el => el.remove());
                 });
-                return clone.innerText || clone.textContent;
+                return clone.innerHTML;
             }''')
+            content = self.extract_content_html(html)
             if content and len(content.strip()) > 100:
+                print("  ✓ Extracted from body (filtered)")
                 return content.strip()
         except Exception:
             pass
             
-        # Step 4: Last resort
+        # Step 4: Last resort - get all HTML and extract
         try:
-            content = await page.text_content('body')
+            html = await page.content()
+            content = self.extract_content_html(html)
             if content and len(content.strip()) > 100:
+                print("  ✓ Extracted from page (full)")
                 return content.strip()
         except Exception:
             pass
@@ -163,73 +289,128 @@ class WebScraper:
             await asyncio.sleep(0.1)
             return response.data[0].embedding
         except Exception as e:
-            print(f"Error generating embedding: {e}")
+            print(f"  ⚠️  Embedding failed: {e}")
             raise
 
-    async def scrape_url(self, url: str) -> Optional[Dict[str, Any]]:
+    def insert_or_update_document(self, url: str, content: str, title: str, embedding: Optional[list]) -> str:
+        """
+        Insert new document or update existing one.
+        Prevents duplicates by checking metadata.source.
+        """
+        # Check for existing document
+        existing = self.supabase.table('documents').select('*').contains('metadata', {'source': url}).execute()
+        
+        insert_data = {
+            'content': content,
+            'metadata': {
+                'source': url,
+                'source_type': 'web_scrape',
+                'title': title,
+                'scraped_at': datetime.utcnow().isoformat()
+            }
+        }
+        
+        if embedding:
+            insert_data['embedding'] = embedding
+        
+        if existing.data and len(existing.data) > 0:
+            # UPDATE existing document
+            doc_id = existing.data[0]['id']
+            self.supabase.table('documents').update(insert_data).eq('id', doc_id).execute()
+            print(f"  ✓ Updated existing document (ID: {doc_id})")
+            return 'updated'
+        else:
+            # INSERT new document
+            self.supabase.table('documents').insert(insert_data).execute()
+            print(f"  ✓ Inserted new document")
+            return 'inserted'
+
+    async def scrape_url(self, url: str, max_retries: int = 3) -> Optional[Dict[str, Any]]:
         """
         Scrape a single URL: expand, extract, embed.
+        With retry logic and exponential backoff.
         """
-        browser = None
-        try:
-            playwright = await async_playwright().start()
-            
-            # Reference B - Browser launch args for Railway
-            browser = await playwright.chromium.launch(
-                args=[
-                    "--disable-dev-shm-usage",
-                    "--disable-setuid-sandbox",
-                    "--no-sandbox",
-                    "--disable-gpu",
-                    "--no-zygote",
-                    "--single-process"
-                ]
-            )
-            
-            context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                viewport={'width': 1920, 'height': 1080}
-            )
-            
-            page = await context.new_page()
-            
-            # Navigate to URL
-            await page.goto(url, timeout=30000, wait_until='networkidle')
-            
-            # Reference C - Handle cookies
-            await self.handle_cookies(page)
-            
-            # Reference A - Expand all content
-            await self.expand_all_content(page)
-            
-            # Reference D - Extract content
-            content = await self.extract_content_4step(page)
-            
-            if not content:
-                return None
+        context = await self.get_browser_context()
+        self.request_count += 1
+        
+        last_error = None
+        
+        for attempt in range(max_retries):
+            page = None
+            try:
+                print(f"  Scraping: {url[:70]}{'...' if len(url) > 70 else ''} (attempt {attempt + 1}/{max_retries})")
                 
-            # Get page title
-            title = await page.title() or "Untitled"
-            
-            # Reference: Generate embedding for RAG
-            embedding = await self.generate_embedding(content)
-            
-            await browser.close()
-            await playwright.stop()
-            
-            return {
-                'content': content,
-                'metadata': {'source': url, 'title': title},
-                'embedding': embedding
-            }
-            
-        except Exception as e:
-            print(f"Error scraping {url}: {e}")
-            if browser:
-                await browser.close()
-            return None
+                page = await context.new_page()
+                
+                # Use "domcontentloaded" instead of "networkidle" (faster, more reliable)
+                await page.goto(url, timeout=60000, wait_until='domcontentloaded')
+                
+                # Reference C - Handle cookies
+                await self.handle_cookies(page)
+                
+                # Reference A - Expand all content
+                await self.expand_all_content(page)
+                
+                # Reference D - Extract content
+                content = await self.extract_content_4step(page)
+                
+                # Validate content (minimum 50 characters)
+                if not content or len(content.strip()) < 50:
+                    raise ValueError(f"Extracted content too short ({len(content) if content else 0} chars < 50 minimum)")
+                
+                # Get page title
+                title = await page.title() or "Untitled"
+                
+                print(f"    ✓ Success: {len(content):,} chars extracted")
+                
+                await page.close()
+                
+                # Reference: Generate embedding for RAG
+                embedding = await self.generate_embedding(content)
+                
+                return {
+                    'url': url,
+                    'content': content,
+                    'title': title,
+                    'embedding': embedding,
+                    'status': 'success',
+                    'attempts': attempt + 1
+                }
+                
+            except asyncio.TimeoutError as e:
+                last_error = f"Timeout: {str(e)}"
+                print(f"    ⏱️  Timeout on attempt {attempt + 1}")
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                
+            except ValueError as e:
+                last_error = f"Validation: {str(e)}"
+                print(f"    ❌ Validation failed on attempt {attempt + 1}: {e}")
+                await asyncio.sleep(1)
+                
+            except Exception as e:
+                last_error = str(e)
+                print(f"    ❌ Error on attempt {attempt + 1}: {e}")
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                
+            finally:
+                if page:
+                    try:
+                        await page.close()
+                    except Exception:
+                        pass
+        
+        print(f"    ❌ FAILED after {max_retries} attempts: {url[:70]}...")
+        return {
+            'url': url,
+            'content': None,
+            'title': None,
+            'embedding': None,
+            'status': 'error',
+            'error': last_error,
+            'attempts': max_retries
+        }
 
-    async def process_urls(self, urls: list, max_concurrent: int = 2) -> Dict[str, Any]:
+    async def process_urls(self, urls: list, max_concurrent: int = 3) -> Dict[str, Any]:
         """
         Process multiple URLs concurrently with semaphore limit.
         """
@@ -239,20 +420,22 @@ class WebScraper:
         async def process_with_semaphore(url: str):
             async with semaphore:
                 try:
-                    # Scrape the URL
-                    data = await self.scrape_url(url)
-                    if data:
-                        # Insert into documents table
-                        self.supabase.table('documents').insert({
-                            'content': data['content'],
-                            'metadata': data['metadata'],
-                            'embedding': data['embedding']
-                        }).execute()
+                    # Scrape URL with retry logic
+                    data = await self.scrape_url(url, max_retries=3)
+                    
+                    if data['status'] == 'success':
+                        # Insert or update document (with duplicate detection)
+                        self.insert_or_update_document(
+                            data['url'],
+                            data['content'],
+                            data['title'],
+                            data['embedding']
+                        )
                         results['success'].append(url)
                     else:
                         results['failed'].append(url)
                 except Exception as e:
-                    print(f"Failed to process {url}: {e}")
+                    print(f"  ❌ Failed to process {url}: {e}")
                     results['failed'].append(url)
         
         tasks = [process_with_semaphore(url) for url in urls]
@@ -279,6 +462,7 @@ class WebScraper:
     def validate_data(self) -> Dict[str, Any]:
         """
         Validate scraped data for phantom completions, missing embeddings, and stuck URLs.
+        Enhanced with stuck URL detection.
         """
         issues = {'phantom_completions': [], 'missing_embeddings': [], 'stuck_urls': []}
         
@@ -287,7 +471,7 @@ class WebScraper:
         for row in completed_urls.data:
             url = row['url']
             # Check if this URL exists in documents metadata
-            doc = self.supabase.table('documents').select('id').filter('metadata->>source', 'eq', url).limit(1).execute()
+            doc = self.supabase.table('documents').select('id').contains('metadata', {'source': url}).limit(1).execute()
             if not doc.data:
                 issues['phantom_completions'].append(url)
         
@@ -296,10 +480,13 @@ class WebScraper:
         issues['missing_embeddings'] = [row['id'] for row in missing_emb.data]
         
         # Stuck URLs: URLs stuck in 'processing' status for > 1 hour
-        from datetime import datetime, timedelta
+        from datetime import timedelta
         one_hour_ago = datetime.utcnow() - timedelta(hours=1)
         stuck = self.supabase.table('url_queue').select('url').eq('status', 'processing').lt('updated_at', one_hour_ago.isoformat()).execute()
         issues['stuck_urls'] = [row['url'] for row in stuck.data]
+        
+        if issues['stuck_urls']:
+            print(f"  ⚠️  Found {len(issues['stuck_urls'])} stuck URLs (>1 hour in processing)")
         
         return issues
 
@@ -310,23 +497,26 @@ class WebScraper:
         results = {'fixed': 0, 'failed': 0}
         
         # Fix phantom completions: Re-scrape and insert
+        print(f"\n🔧 Fixing {len(issues.get('phantom_completions', []))} phantom completions...")
         for url in issues.get('phantom_completions', []):
             try:
-                data = await self.scrape_url(url)
-                if data:
-                    self.supabase.table('documents').insert({
-                        'content': data['content'],
-                        'metadata': data['metadata'],
-                        'embedding': data['embedding']
-                    }).execute()
+                data = await self.scrape_url(url, max_retries=3)
+                if data['status'] == 'success':
+                    self.insert_or_update_document(
+                        data['url'],
+                        data['content'],
+                        data['title'],
+                        data['embedding']
+                    )
                     results['fixed'] += 1
                 else:
                     results['failed'] += 1
             except Exception as e:
-                print(f"Failed to fix phantom completion for {url}: {e}")
+                print(f"  ❌ Failed to fix phantom completion for {url}: {e}")
                 results['failed'] += 1
         
         # Fix missing embeddings: Retrieve content, generate embedding, update
+        print(f"\n🔧 Fixing {len(issues.get('missing_embeddings', []))} missing embeddings...")
         for doc_id in issues.get('missing_embeddings', []):
             try:
                 doc = self.supabase.table('documents').select('id, content').eq('id', doc_id).single().execute()
@@ -338,16 +528,21 @@ class WebScraper:
                 else:
                     results['failed'] += 1
             except Exception as e:
-                print(f"Failed to fix missing embedding for doc {doc_id}: {e}")
+                print(f"  ❌ Failed to fix missing embedding for doc {doc_id}: {e}")
                 results['failed'] += 1
         
         # Reset stuck URLs to pending
+        print(f"\n🔧 Resetting {len(issues.get('stuck_urls', []))} stuck URLs...")
         for url in issues.get('stuck_urls', []):
             try:
                 self.supabase.table('url_queue').update({'status': 'pending', 'updated_at': 'now()'}).eq('url', url).execute()
                 results['fixed'] += 1
             except Exception as e:
-                print(f"Failed to reset stuck URL {url}: {e}")
+                print(f"  ❌ Failed to reset stuck URL {url}: {e}")
                 results['failed'] += 1
         
         return results
+    
+    async def cleanup(self):
+        """Cleanup browser resources."""
+        await self.close_browser()

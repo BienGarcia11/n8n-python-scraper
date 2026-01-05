@@ -1,8 +1,8 @@
 import os
 import asyncio
+import uuid
 from typing import Dict, Any
 from fastapi import FastAPI, BackgroundTasks, HTTPException
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from scraper import WebScraper
@@ -27,9 +27,8 @@ app = FastAPI(title="Bulk Web Scraper for RAG", version="1.0.0")
 # Initialize scraper
 scraper = WebScraper(SUPABASE_URL, SUPABASE_KEY, OPENAI_API_KEY)
 
-# Global state for background task
-scraping_task = None
-scraping_active = False
+# Global state for background tasks with task_id system
+task_status: Dict[str, Dict[str, Any]] = {}
 
 
 # Request/Response Models
@@ -40,16 +39,20 @@ class HealthCheckResponse(BaseModel):
 
 
 class BulkScrapeResponse(BaseModel):
-    message: str
+    task_id: str
+    status: str
     urls_queued: int
+    message: str
 
 
 class ScrapingStatusResponse(BaseModel):
     is_scraping: bool
+    current_task_id: str | None
     pending_count: int
     processing_count: int
     completed_count: int
     failed_count: int
+    task_progress: Dict[str, Any] | None
 
 
 class ValidationResponse(BaseModel):
@@ -60,8 +63,11 @@ class ValidationResponse(BaseModel):
 
 
 class ValidationFixResponse(BaseModel):
-    fixed: int
-    failed: int
+    message: str
+    phantom_completions: list
+    missing_embeddings: list
+    stuck_urls: list
+    total_issues: int
 
 
 class ResetResponse(BaseModel):
@@ -75,21 +81,29 @@ class StopResponse(BaseModel):
 
 
 # Background task function
-async def run_bulk_scrape():
+async def run_bulk_scrape(task_id: str):
     """Background task to process pending URLs."""
-    global scraping_active, scraping_task
-    
     try:
-        scraping_active = True
+        # Initialize task status
+        task_status[task_id] = {
+            "status": "running",
+            "started_at": asyncio.get_event_loop().time(),
+            "processed": 0,
+            "failed": 0,
+            "cancelled": False
+        }
         
         # Get pending URLs
         urls = scraper.get_pending_urls(limit=MAX_BULK_URLS)
         
         if not urls:
             print("No pending URLs to process")
+            task_status[task_id]["status"] = "completed"
+            task_status[task_id]["message"] = "No pending URLs to process"
             return
             
-        print(f"Starting bulk scrape for {len(urls)} URLs")
+        print(f"Starting bulk scrape for {len(urls)} URLs (Task: {task_id})")
+        task_status[task_id]["total_urls"] = len(urls)
         
         # Update all URLs to 'processing' status
         for url in urls:
@@ -104,12 +118,89 @@ async def run_bulk_scrape():
         for url in results['failed']:
             scraper.update_url_status(url, 'failed')
         
-        print(f"Bulk scrape completed: {len(results['success'])} success, {len(results['failed'])} failed")
+        # Update task status
+        task_status[task_id]["processed"] = len(results['success'])
+        task_status[task_id]["failed"] = len(results['failed'])
+        task_status[task_id]["status"] = "completed"
+        task_status[task_id]["message"] = f"Completed: {len(results['success'])} success, {len(results['failed'])} failed"
+        
+        print(f"Bulk scrape completed (Task: {task_id}): {len(results['success'])} success, {len(results['failed'])} failed")
         
     except Exception as e:
-        print(f"Error in bulk scrape: {e}")
+        print(f"Error in bulk scrape (Task: {task_id}): {e}")
+        if task_id in task_status:
+            task_status[task_id]["status"] = "failed"
+            task_status[task_id]["error"] = str(e)
     finally:
-        scraping_active = False
+        # Cleanup old task statuses (keep only last 10)
+        if len(task_status) > 10:
+            oldest_tasks = sorted(task_status.keys())[:-10]
+            for old_id in oldest_tasks:
+                del task_status[old_id]
+
+
+# Background task for validation fixes
+async def run_validation_fixes(task_id: str, issues: Dict[str, Any]):
+    """Background task to process validation fixes."""
+    try:
+        # Initialize task status
+        task_status[task_id] = {
+            "status": "running",
+            "started_at": asyncio.get_event_loop().time(),
+            "fixed": 0,
+            "failed": 0,
+            "cancelled": False
+        }
+        
+        print(f"Starting validation fixes (Task: {task_id})")
+        
+        results = await scraper.fix_validation_issues(issues)
+        
+        # Update task status
+        task_status[task_id]["fixed"] = results['fixed']
+        task_status[task_id]["failed"] = results['failed']
+        task_status[task_id]["status"] = "completed"
+        
+        print(f"Validation fixes completed (Task: {task_id}): {results['fixed']} fixed, {results['failed']} failed")
+        
+    except Exception as e:
+        print(f"Error in validation fixes (Task: {task_id}): {e}")
+        if task_id in task_status:
+            task_status[task_id]["status"] = "failed"
+            task_status[task_id]["error"] = str(e)
+    finally:
+        # Cleanup old task statuses
+        if len(task_status) > 10:
+            oldest_tasks = sorted(task_status.keys())[:-10]
+            for old_id in oldest_tasks:
+                del task_status[old_id]
+
+
+# Startup event - initialize browser
+@app.on_event("startup")
+async def startup_event():
+    """Initialize browser on startup."""
+    try:
+        await scraper.get_browser_context()
+        print("✅ Browser initialized on startup")
+    except Exception as e:
+        print(f"⚠️  Warning: Browser initialization failed on startup: {e}")
+
+
+# Shutdown event - cleanup resources
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown."""
+    print("🛑 Shutting down scraper...")
+    try:
+        await scraper.cleanup()
+        print("✅ Browser closed")
+    except Exception as e:
+        print(f"⚠️  Warning: Browser cleanup failed: {e}")
+    
+    # Clean up task statuses
+    task_status.clear()
+    print("✅ Shutdown complete")
 
 
 # Root endpoint - Show all available endpoints
@@ -128,12 +219,12 @@ async def root():
             {
                 "path": "/start_bulk_scrape",
                 "method": "POST",
-                "description": "Begin scraping job (processes in background)"
+                "description": "Begin scraping job (processes in background, returns task_id)"
             },
             {
                 "path": "/scraping_status",
                 "method": "GET",
-                "description": "Check queue and job status"
+                "description": "Check queue and job status (includes task_id)"
             },
             {
                 "path": "/validate",
@@ -173,29 +264,40 @@ async def health_check():
 @app.post("/start_bulk_scrape", response_model=BulkScrapeResponse)
 async def start_bulk_scrape(background_tasks: BackgroundTasks):
     """
-    Begin the scraping job.
+    Begin scraping job.
     Responds immediately to n8n, processes in background.
+    Returns task_id for tracking.
     """
-    global scraping_active, scraping_task
-    
-    if scraping_active:
-        raise HTTPException(status_code=409, detail="Scraping is already in progress")
+    # Check for running tasks
+    running_tasks = [tid for tid, tinfo in task_status.items() if tinfo.get("status") == "running"]
+    if running_tasks:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Scraping is already in progress (Task ID: {running_tasks[0]})"
+        )
     
     # Get pending URLs to report count
     urls = scraper.get_pending_urls(limit=MAX_BULK_URLS)
     
     if not urls:
         return BulkScrapeResponse(
-            message="No pending URLs to process",
-            urls_queued=0
+            task_id=str(uuid.uuid4()),
+            status="completed",
+            urls_queued=0,
+            message="No pending URLs to process"
         )
     
+    # Create task ID
+    task_id = str(uuid.uuid4())
+    
     # Start background task
-    background_tasks.add_task(run_bulk_scrape)
+    background_tasks.add_task(run_bulk_scrape, task_id)
     
     return BulkScrapeResponse(
-        message=f"Bulk scrape started for {len(urls)} URLs",
-        urls_queued=len(urls)
+        task_id=task_id,
+        status="started",
+        urls_queued=len(urls),
+        message=f"Bulk scrape started for {len(urls)} URLs"
     )
 
 
@@ -203,6 +305,7 @@ async def start_bulk_scrape(background_tasks: BackgroundTasks):
 async def scraping_status():
     """
     Check the status of the queue and current job.
+    Returns task_id and detailed progress.
     """
     from supabase import create_client
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -213,12 +316,30 @@ async def scraping_status():
     completed = supabase.table('url_queue').select('id', count='exact').eq('status', 'completed').execute()
     failed = supabase.table('url_queue').select('id', count='exact').eq('status', 'failed').execute()
     
+    # Find current running task
+    current_task_id = None
+    task_progress_info = None
+    for tid, tinfo in task_status.items():
+        if tinfo.get("status") == "running":
+            current_task_id = tid
+            task_progress_info = {
+                "total_urls": tinfo.get("total_urls", 0),
+                "processed": tinfo.get("processed", 0),
+                "failed": tinfo.get("failed", 0),
+                "status": tinfo.get("status")
+            }
+            break
+    
+    is_scraping = current_task_id is not None
+    
     return ScrapingStatusResponse(
-        is_scraping=scraping_active,
+        is_scraping=is_scraping,
+        current_task_id=current_task_id,
         pending_count=pending.count if hasattr(pending, 'count') else 0,
         processing_count=processing.count if hasattr(processing, 'count') else 0,
         completed_count=completed.count if hasattr(completed, 'count') else 0,
-        failed_count=failed.count if hasattr(failed, 'count') else 0
+        failed_count=failed.count if hasattr(failed, 'count') else 0,
+        task_progress=task_progress_info
     )
 
 
@@ -233,11 +354,13 @@ async def validate():
     """
     issues = scraper.validate_data()
     
+    total_issues = len(issues['phantom_completions']) + len(issues['missing_embeddings']) + len(issues['stuck_urls'])
+    
     return ValidationResponse(
         phantom_completions=issues['phantom_completions'],
         missing_embeddings=issues['missing_embeddings'],
         stuck_urls=issues['stuck_urls'],
-        total_issues=len(issues['phantom_completions']) + len(issues['missing_embeddings']) + len(issues['stuck_urls'])
+        total_issues=total_issues
     )
 
 
@@ -251,31 +374,22 @@ async def validate_fix(background_tasks: BackgroundTasks):
     """
     issues = scraper.validate_data()
     
+    # Create task ID
+    task_id = str(uuid.uuid4())
+    
     # Start background task for fixing
-    background_tasks.add_task(run_validation_fixes, issues)
+    background_tasks.add_task(run_validation_fixes, task_id, issues)
     
     # Return validation results immediately
-    return {
-        "message": "Validation fixes started in background",
-        "phantom_completions": issues['phantom_completions'],
-        "missing_embeddings": issues['missing_embeddings'],
-        "stuck_urls": issues['stuck_urls'],
-        "total_issues": len(issues['phantom_completions']) + len(issues['missing_embeddings']) + len(issues['stuck_urls'])
-    }
-
-
-async def run_validation_fixes(issues: Dict[str, Any]):
-    """Background task to process validation fixes."""
-    global scraping_active
+    total_issues = len(issues['phantom_completions']) + len(issues['missing_embeddings']) + len(issues['stuck_urls'])
     
-    try:
-        scraping_active = True
-        results = await scraper.fix_validation_issues(issues)
-        print(f"Validation fixes completed: {results['fixed']} fixed, {results['failed']} failed")
-    except Exception as e:
-        print(f"Error in validation fixes: {e}")
-    finally:
-        scraping_active = False
+    return ValidationFixResponse(
+        message="Validation fixes started in background",
+        phantom_completions=issues['phantom_completions'],
+        missing_embeddings=issues['missing_embeddings'],
+        stuck_urls=issues['stuck_urls'],
+        total_issues=total_issues
+    )
 
 
 @app.post("/reset_to_pending", response_model=ResetResponse)
@@ -317,18 +431,22 @@ async def stop_scraping_work():
     """
     Immediately terminate any active scraping processes.
     """
-    global scraping_active
+    # Find running tasks and mark them as cancelled
+    cancelled_count = 0
+    for tid, tinfo in task_status.items():
+        if tinfo.get("status") == "running":
+            task_status[tid]["cancelled"] = True
+            cancelled_count += 1
+            print(f"Marked task {tid} for cancellation")
     
-    if not scraping_active:
+    if cancelled_count == 0:
         return StopResponse(
             message="No scraping process is currently active",
             success=False
         )
     
-    scraping_active = False
-    
     return StopResponse(
-        message="Scraping process termination requested",
+        message=f"Requested cancellation for {cancelled_count} task(s)",
         success=True
     )
 
