@@ -13,7 +13,13 @@ RUN apt-get update && apt-get install -y \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Playwright browsers and system dependencies
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Install Python dependencies (includes playwright)
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install Playwright system dependencies
 RUN apt-get update && apt-get install -y \
     libnss3 \
     libnspr4 \
@@ -30,14 +36,8 @@ RUN apt-get update && apt-get install -y \
     libgbm1 \
     libasound2
 
-# Install Python Playwright browsers
+# Install Python Playwright browsers (after playwright package is installed)
 RUN python -m playwright install chromium
-
-# Copy requirements first for better caching
-COPY requirements.txt .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
