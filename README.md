@@ -1,228 +1,324 @@
 # RAG System Web Scraper
 
-A robust, async web scraper that fetches URLs from a Supabase queue, scrapes content using Playwright, generates OpenAI embeddings, and stores the results in a Supabase documents table for RAG systems.
+A robust, production-ready web scraper designed for RAG (Retrieval-Augmented Generation) systems. This scraper efficiently processes URLs from a queue, extracts comprehensive content (including dynamic and hidden elements), generates OpenAI embeddings, and stores everything in a Supabase database.
 
 ## Features
 
-- **Playwright-based scraping**: Fast, reliable web scraping with JavaScript rendering
-- **OpenAI embeddings**: Automatically generates embeddings for scraped content
-- **Async processing**: Concurrent URL processing for efficiency
-- **Error handling**: Automatic retries with exponential backoff
-- **Batch processing**: Processes URLs in configurable batches
-- **Status tracking**: Tracks each URL's status (pending, processing, completed, failed)
-- **Docker-ready**: Containerized for easy deployment on Railway
-- **Logging**: Comprehensive logging for monitoring and debugging
+- **Thorough Content Extraction**: Handles dynamic content, lazy loading, dropdowns, and hidden elements
+- **Intelligent Interaction**: Automatically clicks expandable elements, scrolls through pages, and hovers over interactive elements
+- **Retry Mechanism**: Built-in retry logic with exponential backoff for reliability
+- **Batch Processing**: Efficient batch processing for large URL queues
+- **OpenAI Embeddings**: Automatic embedding generation for RAG systems
+- **Supabase Integration**: Native Supabase support for URL queue and document storage
+- **Railway Ready**: Optimized for Railway deployment with Docker support
+- **Comprehensive Logging**: Detailed logging for monitoring and debugging
 
 ## Architecture
 
-1. **URL Queue**: Reads URLs from Supabase `url_queue` table where `status = 'pending'`
-2. **Scraping**: Uses Playwright to scrape web pages and extract content
-3. **Content Processing**: Cleans HTML, extracts metadata, and prepares text
-4. **Embedding Generation**: Sends content to OpenAI for embedding generation
-5. **Document Storage**: Inserts scraped content and embeddings into Supabase `documents` table
-6. **Status Updates**: Updates URL status throughout the process
+### Components
 
-## Prerequisites
+1. **Browser Manager** (`scraper/browser.py`)
+   - Manages Playwright browser instances
+   - Handles context creation and cleanup
+   - Optimizes resource usage
+
+2. **Content Interaction** (`scraper/interactions.py`)
+   - Clicks expandable elements
+   - Performs full-page scrolling
+   - Hovers over interactive elements
+   - Waits for dynamic content
+
+3. **Content Extractor** (`scraper/extractor.py`)
+   - Extracts page content and metadata
+   - Cleans and normalizes text
+   - Validates content quality
+
+4. **Embedding Generator** (`embeddings/generator.py`)
+   - Generates OpenAI embeddings
+   - Batch processing for efficiency
+   - Token counting and truncation
+
+5. **Database Manager** (`database.py`)
+   - Supabase CRUD operations
+   - URL queue management
+   - Document storage with embeddings
+
+## Setup
+
+### Prerequisites
 
 - Python 3.11+
 - Supabase project with `url_queue` and `documents` tables
 - OpenAI API key
-- Railway account (for deployment) or local environment
+- Railway account (for deployment)
 
-## Database Schema
+### Local Setup
 
-### url_queue table
-```sql
-- id (bigint, primary key)
-- url (text, unique)
-- status (text, default: 'pending')
-- created_at (timestamptz)
-- updated_at (timestamptz)
-- error_message (text, optional)
-```
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/BienGarcia11/n8n-python-scraper.git
+   cd n8n-python-scraper
+   ```
 
-### documents table
-```sql
-- id (bigint, primary key)
-- content (text)
-- metadata (jsonb)
-- embedding (vector)
-- created_at (timestamptz)
-- updated_at (timestamptz)
-```
+2. **Create virtual environment**
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
 
-## Setup
+3. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-### 1. Clone the repository
-```bash
-git clone https://github.com/BienGarcia11/n8n-python-scraper.git
-cd n8n-python-scraper
-```
+4. **Install Playwright browsers**
+   ```bash
+   playwright install chromium
+   playwright install-deps chromium
+   ```
 
-### 2. Install dependencies
-```bash
-pip install -r requirements.txt
-playwright install chromium
-```
+5. **Configure environment variables**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your credentials
+   ```
 
-### 3. Configure environment variables
-Copy `.env.example` to `.env` and fill in your credentials:
+### Environment Variables
 
-```bash
-cp .env.example .env
-```
+Create a `.env` file with the following variables:
 
-Edit `.env`:
 ```env
 # Supabase Configuration
 SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_KEY=your_service_role_key
+SUPABASE_SERVICE_KEY=your-service-role-key-here
 
 # OpenAI Configuration
-OPENAI_API_KEY=your_openai_api_key
+OPENAI_API_KEY=your-openai-api-key-here
 EMBEDDING_MODEL=text-embedding-3-small
 
 # Scraper Configuration
-BATCH_SIZE=10
+CONCURRENCY_LIMIT=5
+BATCH_SIZE=50
 MAX_RETRIES=3
-SCRAPER_TIMEOUT=30000
+TIMEOUT_SECONDS=30
+SCROLL_WAIT_MS=1000
+INTERACTION_WAIT_MS=1000
+
+# Logging
+LOG_LEVEL=INFO
 ```
 
-**Important**: Use the **service_role** key from Supabase, not the anon key, as the scraper needs write access.
+**Important**: Use the **service role key** for Supabase, not the anon key, as the scraper needs write access.
 
-### 4. Run locally
+## Usage
+
+### Running Locally
+
 ```bash
-python scraper.py
+python main.py
+```
+
+The scraper will:
+1. Fetch pending URLs from the `url_queue` table
+2. Process them in batches
+3. Extract content with thorough interaction
+4. Generate embeddings
+5. Store results in the `documents` table
+6. Update URL status (pending → processing → completed/failed)
+
+### Monitoring Progress
+
+The scraper logs progress to:
+- Console (stdout)
+- `scraper.log` file
+
+Progress information includes:
+- URLs processed
+- Success/failure count
+- Word/character counts
+- Error messages
+
+## Database Schema
+
+### url_queue Table
+
+```sql
+CREATE TABLE url_queue (
+    id BIGINT PRIMARY KEY DEFAULT NEXTVAL('url_queue_id_seq'),
+    url TEXT UNIQUE NOT NULL,
+    status TEXT DEFAULT 'pending',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+### documents Table
+
+```sql
+CREATE TABLE documents (
+    id BIGINT PRIMARY KEY DEFAULT NEXTVAL('documents_id_seq'),
+    content TEXT NOT NULL,
+    metadata JSONB NOT NULL,
+    embedding VECTOR(1536),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 ```
 
 ## Railway Deployment
 
-### 1. Create Railway account and install CLI
+### Automatic Deployment
+
+1. **Push to GitHub**
+   ```bash
+   git add .
+   git commit -m "Initial commit"
+   git push origin main
+   ```
+
+2. **Create Railway Project**
+   - Go to [Railway](https://railway.app)
+   - Click "New Project" → "Deploy from GitHub"
+   - Select your repository
+
+3. **Configure Environment Variables**
+   In Railway dashboard, add all environment variables from `.env.example`
+
+4. **Deploy**
+   Railway will automatically build and deploy using the Dockerfile
+
+### Manual Deployment with Railway CLI
+
 ```bash
+# Install Railway CLI
 npm install -g @railway/cli
+
+# Login
 railway login
-```
 
-### 2. Initialize Railway project
-```bash
+# Initialize project
 railway init
-```
 
-### 3. Set environment variables
-```bash
-railway variables set SUPABASE_URL=https://your-project.supabase.co
-railway variables set SUPABASE_KEY=your_service_role_key
-railway variables set OPENAI_API_KEY=your_openai_api_key
-railway variables set EMBEDDING_MODEL=text-embedding-3-small
-railway variables set BATCH_SIZE=10
-railway variables set MAX_RETRIES=3
-railway variables set SCRAPER_TIMEOUT=30000
-```
+# Set environment variables
+railway variables set SUPABASE_URL="https://your-project.supabase.co"
+railway variables set SUPABASE_SERVICE_KEY="your-service-role-key"
+railway variables set OPENAI_API_KEY="your-openai-api-key"
+# ... add other variables
 
-### 4. Deploy
-```bash
+# Deploy
 railway up
 ```
 
-### 5. Monitor deployment
-```bash
-railway logs
-```
+## Performance
 
-## Configuration Options
+### Expected Performance
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `SUPABASE_URL` | Supabase project URL | Required |
-| `SUPABASE_KEY` | Supabase service role key | Required |
-| `OPENAI_API_KEY` | OpenAI API key | Required |
-| `EMBEDDING_MODEL` | OpenAI embedding model | `text-embedding-3-small` |
-| `BATCH_SIZE` | URLs processed per batch | `10` |
-| `MAX_RETRIES` | Max retry attempts per URL | `3` |
-| `SCRAPER_TIMEOUT` | Page load timeout (ms) | `30000` |
+With 4,988 URLs in thorough mode:
+- **Processing time**: 8-12 hours
+- **Processing rate**: 6-12 URLs/minute
+- **Memory usage**: ~1-2 GB per instance
+- **Railway concurrency**: 3-5 instances recommended
 
-## Usage
+### Optimization Tips
 
-### Adding URLs to the queue
-```sql
-INSERT INTO url_queue (url, status) VALUES 
-('https://example.com/article1', 'pending'),
-('https://example.com/article2', 'pending');
-```
+1. **Adjust concurrency** based on Railway plan:
+   - Starter: 2-3 concurrent instances
+   - Basic: 3-5 concurrent instances
+   - Pro: 5-10 concurrent instances
 
-### Running the scraper
-The scraper will:
-1. Fetch URLs with status `pending`
-2. Mark them as `processing`
-3. Scrape each URL with Playwright
-4. Generate OpenAI embeddings
-5. Insert into `documents` table
-6. Mark URLs as `completed` or `failed`
+2. **Tune batch size**:
+   - Smaller batches (25-50): Better for error recovery
+   - Larger batches (100-200): Better throughput
 
-### Monitoring progress
-Check the `url_queue` table:
-```sql
-SELECT status, COUNT(*) FROM url_queue GROUP BY status;
-```
-
-### Viewing scraped documents
-```sql
-SELECT id, metadata->>'title' as title, metadata->>'url' as url, created_at 
-FROM documents 
-ORDER BY created_at DESC 
-LIMIT 10;
-```
-
-## Performance Optimization
-
-### For high-volume scraping (1000+ URLs):
-- Increase `BATCH_SIZE` to 20-50
-- Consider running multiple scraper instances
-- Use Railway's automatic scaling
-- Monitor OpenAI API rate limits
-
-### For memory-constrained environments:
-- Reduce `BATCH_SIZE` to 5
-- Reduce `SCRAPER_TIMEOUT`
-- Use lighter Playwright configuration
+3. **Optimize timeout**:
+   - Faster sites: 15-20 seconds
+   - Complex sites: 30-40 seconds
 
 ## Troubleshooting
 
-### Scraper stops processing
-- Check logs: `railway logs`
-- Verify database connection
-- Check OpenAI API quota
-- Review failed URLs in `url_queue` table
+### Common Issues
 
-### Timeout errors
-- Increase `SCRAPER_TIMEOUT`
-- Check URL accessibility
-- Verify network connectivity
+**1. Playwright Browser Fails to Start**
+```bash
+# Reinstall Playwright browsers
+playwright install chromium --force
+playwright install-deps chromium
+```
 
-### Memory issues
+**2. Memory Errors**
+- Reduce `CONCURRENCY_LIMIT`
 - Reduce `BATCH_SIZE`
-- Use Railway's larger plans
-- Consider rate limiting
+
+**3. Timeout Errors**
+- Increase `TIMEOUT_SECONDS`
+- Check network connectivity
+- Verify URLs are accessible
+
+**4. Database Connection Errors**
+- Verify Supabase URL and key
+- Check service role key permissions
+- Ensure database is accessible
+
+**5. OpenAI API Errors**
+- Verify API key is valid
+- Check API quota/limits
+- Ensure billing is enabled
+
+### Debug Mode
+
+Set `LOG_LEVEL=DEBUG` for detailed logging:
+
+```env
+LOG_LEVEL=DEBUG
+```
+
+## Content Extraction Strategy
+
+The scraper uses a **thorough mode** by default to handle complex websites:
+
+1. **Initial Load**: Wait for network idle
+2. **Expand Elements**: Click all dropdowns, accordions, "Read More" buttons
+3. **Hover Interactions**: Hover over menu items and dropdowns
+4. **First Scroll**: Incremental scroll to trigger lazy loading
+5. **Wait for Content**: Wait for dynamic content to load
+6. **Second Expand**: Check for newly appeared expandable elements
+7. **Final Scroll**: Another pass to catch remaining lazy-loaded content
+
+This ensures maximum content extraction, even from complex web applications.
 
 ## Error Handling
 
-The scraper implements:
-- **Automatic retries**: Up to 3 attempts per URL with exponential backoff
-- **Status tracking**: Each URL's status is updated throughout the process
-- **Error logging**: All errors are logged with context
-- **Graceful shutdown**: Proper cleanup on termination
+The scraper implements robust error handling:
+
+- **Automatic retries**: 3 attempts with exponential backoff
+- **Status tracking**: URLs marked as processing/completed/failed
+- **Error logging**: Detailed error messages in database
+- **Graceful degradation**: Continues processing even if some URLs fail
+- **Cleanup**: Proper browser and resource cleanup on errors
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
 
 ## License
 
-MIT License - see LICENSE file for details
+This project is part of the RAG System with Semantic Cache.
 
 ## Support
 
-For issues and questions:
-- Open an issue on GitHub
-- Check Railway logs for runtime errors
-- Review Supabase logs for database issues
+For issues or questions:
+- Check the logs in `scraper.log`
+- Review Railway deployment logs
+- Verify environment variables are correctly set
+
+## Acknowledgments
+
+- [Playwright](https://playwright.dev/) - Browser automation
+- [Supabase](https://supabase.com/) - Backend database
+- [OpenAI](https://openai.com/) - Embedding generation
+- [Railway](https://railway.app/) - Deployment platform
