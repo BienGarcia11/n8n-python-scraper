@@ -51,10 +51,9 @@ class PlaywrightScraper:
         logger.info("Starting Playwright...")
         self.playwright = await async_playwright().start()
         
-        # Launch Chromium browser with custom path
+        # Launch Chromium browser (no custom path - let Playwright find it)
         self.browser = await self.playwright.chromium.launch(
             headless=self.headless,
-            executable_path=f"{self.browsers_path}/chromium-1200/chrome-linux/chrome",
             args=[
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
