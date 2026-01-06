@@ -282,18 +282,22 @@ async def _process_url_batch(url_batch, issues, all_urls_with_docs):
     
     if completed_urls:
         # Optimization 1: Batch document lookup (100x faster!)
+        # Chunk into groups of 100 to avoid URL length limits
         urls_to_check = [u['url'] for u in completed_urls]
+        batch_size = 100  # Safe limit for .in_()
         
-        doc_response = await (
-            worker_instance.supabase
-            .table('documents')
-            .select('url')  # Only select what we need
-            .in_('url', urls_to_check)
-            .execute()
-        )
-        
-        # Add to set for O(1) lookup
-        all_urls_with_docs.update(d['url'] for d in doc_response.data)
+        for i in range(0, len(urls_to_check), batch_size):
+            chunk = urls_to_check[i:i+batch_size]
+            doc_response = await (
+                worker_instance.supabase
+                .table('documents')
+                .select('url')  # Only select what we need
+                .in_('url', chunk)
+                .execute()
+            )
+            
+            # Add to set for O(1) lookup
+            all_urls_with_docs.update(d['url'] for d in doc_response.data)
     
     # Process each URL in batch
     three_minutes_ago = datetime.utcnow() - timedelta(minutes=3)
@@ -509,19 +513,22 @@ async def fix_background_task(task_id: str):
             if not completed_batch:
                 break
             
-            # Optimization: Batch document lookup
+            # Optimization: Batch document lookup with chunking
             urls_to_check = [u['url'] for u in completed_batch]
+            batch_size = 100  # Safe limit for .in_()
             
-            doc_response = await (
-                worker_instance.supabase
-                .table('documents')
-                .select('url')
-                .in_('url', urls_to_check)
-                .execute()
-            )
-            
-            # Check for missing documents
-            all_urls_with_docs = set(d['url'] for d in doc_response.data)
+            for i in range(0, len(urls_to_check), batch_size):
+                chunk = urls_to_check[i:i+batch_size]
+                doc_response = await (
+                    worker_instance.supabase
+                    .table('documents')
+                    .select('url')
+                    .in_('url', chunk)
+                    .execute()
+                )
+                
+                # Check for missing documents
+                all_urls_with_docs = set(d['url'] for d in doc_response.data)
             
             for url_entry in completed_batch:
                 if url_entry['url'] not in all_urls_with_docs:
