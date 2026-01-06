@@ -4,6 +4,7 @@ Manages browser contexts and pages for web scraping.
 """
 import logging
 import random
+import os
 from typing import Optional, Dict, Any
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, TimeoutError
 import asyncio
@@ -36,6 +37,10 @@ class PlaywrightScraper:
         self.playwright = None
         self.browser: Optional[Browser] = None
         
+        # Get browsers path from environment or use default
+        self.browsers_path = os.getenv('PLAYWRIGHT_BROWSERS_PATH', '/home/worker/.cache/ms-playwright')
+        logger.info(f"Playwright browsers path: {self.browsers_path}")
+        
         logger.info(
             f"Initialized Playwright scraper: headless={headless}, "
             f"timeout={timeout}ms"
@@ -46,9 +51,10 @@ class PlaywrightScraper:
         logger.info("Starting Playwright...")
         self.playwright = await async_playwright().start()
         
-        # Launch Chromium browser
+        # Launch Chromium browser with custom path
         self.browser = await self.playwright.chromium.launch(
             headless=self.headless,
+            executable_path=f"{self.browsers_path}/chromium-1200/chrome-linux/chrome",
             args=[
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
