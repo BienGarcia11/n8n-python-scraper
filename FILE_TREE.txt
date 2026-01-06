@@ -1,7 +1,7 @@
 RAG Scraper Worker - Complete File Tree
 ==========================================
 
-rag-scraper/
+./
 │
 ├── main.py                          # Main worker orchestration (main entry point)
 ├── config.py                        # Configuration and environment variables
