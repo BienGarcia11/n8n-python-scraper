@@ -4,6 +4,7 @@ Manages browser contexts and pages for web scraping.
 """
 import logging
 import random
+import os
 from typing import Optional, Dict, Any
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, TimeoutError
 import asyncio
@@ -35,6 +36,19 @@ class PlaywrightScraper:
         ]
         self.playwright = None
         self.browser: Optional[Browser] = None
+        self.executable_path = None
+        
+        # Read browsers path from environment variable if set
+        browsers_path = os.getenv('PLAYWRIGHT_BROWSERS_PATH')
+        if browsers_path:
+            # Construct executable path
+            self.executable_path = os.path.join(
+                browsers_path,
+                'chromium-1200',
+                'chrome-linux',
+                'chrome'
+            )
+            logger.info(f"Using custom Playwright browsers path: {self.executable_path}")
         
         logger.info(
             f"Initialized Playwright scraper: headless={headless}, "
@@ -46,17 +60,24 @@ class PlaywrightScraper:
         logger.info("Starting Playwright...")
         self.playwright = await async_playwright().start()
         
-        # Launch Chromium browser (no custom path - let Playwright find it)
-        self.browser = await self.playwright.chromium.launch(
-            headless=self.headless,
-            args=[
+        # Launch Chromium browser
+        launch_kwargs = {
+            'headless': self.headless,
+            'args': [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
                 '--disable-accelerated-2d-canvas',
                 '--disable-gpu',
             ],
-        )
+        }
+        
+        # Add executable path if set
+        if self.executable_path and os.path.exists(self.executable_path):
+            launch_kwargs['executable_path'] = self.executable_path
+            logger.info(f"Using executable path: {self.executable_path}")
+        
+        self.browser = await self.playwright.chromium.launch(**launch_kwargs)
         
         logger.info("Playwright browser started successfully")
     
@@ -75,7 +96,7 @@ class PlaywrightScraper:
         logger.info("Playwright stopped successfully")
     
     def _get_random_user_agent(self) -> str:
-        """Get a random user agent from the list."""
+        """Get a random user agent from list."""
         return random.choice(self.user_agents)
     
     async def _create_context(self) -> BrowserContext:
