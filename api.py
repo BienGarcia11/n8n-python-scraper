@@ -284,7 +284,7 @@ async def validate_urls():
     
     try:
         # Fetch all URLs from url_queue
-        response = worker_instance.supabase.table('url_queue').select('*').execute()
+        response = await worker_instance.supabase.table('url_queue').select('*').execute()
         all_urls = response.data if response.data else []
         
         total_urls = len(all_urls)
@@ -401,7 +401,7 @@ async def fix_background_task(task_id: str):
         from datetime import datetime, timedelta
         one_hour_ago = datetime.utcnow() - timedelta(hours=1)
         
-        response = worker_instance.supabase.table('url_queue').select('*').execute()
+        response = await worker_instance.supabase.table('url_queue').select('*').execute()
         all_urls = response.data if response.data else []
         
         for url_entry in all_urls:
@@ -412,7 +412,7 @@ async def fix_background_task(task_id: str):
                         updated_time = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
                         if updated_time < one_hour_ago:
                             # Reset to pending
-                            worker_instance.supabase.table('url_queue').update({
+                            await worker_instance.supabase.table('url_queue').update({
                                 'status': 'pending',
                                 'error_message': None,
                                 'updated_at': datetime.utcnow().isoformat(),
@@ -426,7 +426,7 @@ async def fix_background_task(task_id: str):
         
         for url_entry in completed_urls[:100]:  # Batch processing
             doc_response = (
-                worker_instance.supabase
+                await worker_instance.supabase
                 .table('documents')
                 .select('url')
                 .eq('url', url_entry['url'])
@@ -436,7 +436,7 @@ async def fix_background_task(task_id: str):
             
             if not doc_response.data:
                 # No documents found, reset to pending
-                worker_instance.supabase.table('url_queue').update({
+                await worker_instance.supabase.table('url_queue').update({
                     'status': 'pending',
                     'error_message': 'Missing documents detected',
                     'updated_at': datetime.utcnow().isoformat(),
