@@ -391,10 +391,34 @@ class RAGScraperWorker:
             logger.info("Worker stopped")
 
 
+# Global worker instance
+worker: Optional[RAGScraperWorker] = None
+
+
+@app_instance.on_event("startup")
+async def startup_event():
+    """Initialize worker on startup."""
+    global worker
+    logger.info("Initializing worker on startup...")
+    worker = RAGScraperWorker()
+    await worker.initialize()
+    # Start worker in background
+    asyncio.create_task(worker.run())
+
+
+@app_instance.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown."""
+    global worker
+    logger.info("Cleaning up on shutdown...")
+    if worker:
+        await worker.cleanup()
+
+
 async def main():
     """Main entry point."""
-    worker = RAGScraperWorker()
-    await worker.run()
+    w = RAGScraperWorker()
+    await w.run()
 
 
 if __name__ == "__main__":
