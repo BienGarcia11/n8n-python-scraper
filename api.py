@@ -300,7 +300,7 @@ async def validate_urls():
             # Fetch documents for completed URLs
             urls_with_docs = []
             for url_entry in completed_urls[:100]:  # Batch to avoid timeouts
-                doc_response = (
+                doc_response = await (
                     worker_instance.supabase
                     .table('documents')
                     .select('url')
