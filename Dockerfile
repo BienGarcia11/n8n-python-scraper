@@ -53,10 +53,6 @@ RUN playwright install chromium
 # Copy application code
 COPY . .
 
-# Create modules __init__.py
-RUN mkdir -p modules && \
-    touch modules/__init__.py
-
 # Health check (optional)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import asyncio; from main import RAGScraperWorker; print('Worker OK')" || exit 1
