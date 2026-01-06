@@ -133,7 +133,7 @@ class RAGScraperWorker:
             List of URL queue entries
         """
         try:
-            response = self.supabase.table('url_queue').select('*').eq('status', 'pending').limit(limit).execute()
+            response = await self.supabase.table('url_queue').select('*').eq('status', 'pending').limit(limit).execute()
             
             if not response.data:
                 logger.debug("No pending URLs found")
@@ -175,7 +175,7 @@ class RAGScraperWorker:
             if status == 'completed':
                 update_data['processed_at'] = datetime.utcnow().isoformat()
             
-            self.supabase.table('url_queue').update(update_data).eq('id', url_id).execute()
+            await self.supabase.table('url_queue').update(update_data).eq('id', url_id).execute()
             
             logger.debug(f"Updated URL {url_id} to status: {status}")
             
@@ -201,7 +201,7 @@ class RAGScraperWorker:
         
         try:
             # Batch insert documents
-            response = self.supabase.table('documents').insert(documents).execute()
+            response = await self.supabase.table('documents').insert(documents).execute()
             
             logger.info(f"Stored {len(documents)} documents in Supabase")
             return True
