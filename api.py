@@ -295,6 +295,7 @@ async def validate_urls():
             'missing_documents': [],
             'failed_urls': [],
         }
+        schema_errors = []  # Track schema validation errors
         
         # Check 1: Stuck processing URLs (processing for more than 3 minutes)
         three_minutes_ago = datetime.utcnow() - timedelta(minutes=3)
@@ -337,7 +338,16 @@ async def validate_urls():
                         issues['missing_documents'].append(url_entry['url'])
                         logger.debug(f"Found missing documents for: {url_entry['url']}")
                 except Exception as e:
-                    logger.error(f"Error checking documents for {url_entry['url']}: {e}")
+                    # Check for schema errors (column doesn't exist)
+                    error_str = str(e)
+                    if 'column' in error_str.lower() and 'does not exist' in error_str.lower():
+                        schema_errors.append({
+                            'url': url_entry['url'],
+                            'error': f'Schema error: {error_str}',
+                        })
+                        logger.error(f"SCHEMA ERROR for {url_entry['url']}: {error_str}")
+                    else:
+                        logger.error(f"Error checking documents for {url_entry['url']}: {e}")
         
         # Check 3: Failed URLs (report only)
         for url_entry in all_urls:
