@@ -45,7 +45,6 @@ USER worker
 
 # Environment variables
 ENV PYTHONUNBUFFERED=1
-ENV PLAYWRIGHT_BROWSERS_PATH=/home/worker/.cache/ms-playwright
 
 # Install Playwright browser only (no install-deps needed - system deps already installed)
 RUN playwright install chromium
