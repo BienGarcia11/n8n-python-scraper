@@ -5,6 +5,7 @@ RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
     ca-certificates \
+    curl \
     fonts-liberation \
     fonts-ipafont-gothic \
     fonts-wqy-zenhei \
@@ -52,9 +53,12 @@ RUN playwright install chromium
 # Copy application code
 COPY . .
 
-# Health check (optional)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import asyncio; from main import RAGScraperWorker; print('Worker OK')" || exit 1
+# Expose HTTP API port
+EXPOSE 8000
 
-# Run worker
+# Health check - check API is responding
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8000/health_check || exit 1
+
+# Run FastAPI server
 CMD ["python", "main.py"]

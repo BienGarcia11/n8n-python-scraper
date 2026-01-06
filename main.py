@@ -1,6 +1,6 @@
 """
-Main RAG scraper worker.
-Orchestrates the entire scraping, chunking, and embedding pipeline.
+Main RAG scraper worker with HTTP API endpoints.
+Orchestrates entire scraping, chunking, and embedding pipeline.
 """
 import asyncio
 import logging
@@ -15,6 +15,7 @@ from modules.scraper import PlaywrightScraper
 from modules.extractor import ContentExtractor
 from modules.chunker import TextChunker
 from modules.embedder import EmbeddingGenerator
+from api import app_instance, set_worker_instance
 
 # Configure logging
 logging.basicConfig(
@@ -53,6 +54,7 @@ class RAGScraperWorker:
         # Concurrency control
         self.semaphore = asyncio.Semaphore(Config.MAX_CONCURRENT_URLS)
         self.running = True
+        self.start_time = datetime.utcnow().isoformat()
         
         # Statistics
         self.stats = {
@@ -61,6 +63,16 @@ class RAGScraperWorker:
             'urls_failed': 0,
             'chunks_created': 0,
             'embeddings_generated': 0,
+        }
+        
+        # Bulk task tracking
+        self.bulk_task = {
+            'task_id': None,
+            'status': 'idle',
+            'total_urls': 0,
+            'processed_urls': 0,
+            'failed_urls': 0,
+            'percentage': 0.0,
         }
         
         logger.info("RAG Scraper Worker initialized")
@@ -93,6 +105,10 @@ class RAGScraperWorker:
             max_retries=Config.RETRY_ATTEMPTS,
         )
         logger.info("Embedding generator initialized")
+        
+        # Register worker with API
+        set_worker_instance(self)
+        logger.info("Worker registered with API")
     
     async def cleanup(self):
         """Cleanup resources."""
@@ -211,7 +227,7 @@ class RAGScraperWorker:
                 # Update status to processing
                 await self.update_url_status(url_id, 'processing')
                 
-                # Step 1: Scrape the URL
+                # Step 1: Scrape URL
                 logger.info(f"Scraping {url}")
                 scrape_result = await self.scraper.scrape_with_retry(
                     url,
@@ -235,7 +251,7 @@ class RAGScraperWorker:
                 if not self.extractor.validate_content(extract_result['content']):
                     raise Exception("Content validation failed")
                 
-                # Step 3: Chunk the text
+                # Step 3: Chunk text
                 logger.info(f"Chunking content from {url}")
                 chunks = self.chunker.chunk_text(
                     extract_result['content'],
@@ -382,8 +398,12 @@ async def main():
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Interrupted by user")
-        sys.exit(0)
+    # Start FastAPI server if running directly (for Railway)
+    import uvicorn
+    logger.info("Starting HTTP API server on port 8000...")
+    uvicorn.run(
+        "main:app_instance",
+        host="0.0.0.0",
+        port=8000,
+        log_level="info",
+    )

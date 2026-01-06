@@ -1,0 +1,453 @@
+"""
+HTTP API endpoints for RAG scraper.
+Provides control interface for n8n workflows.
+"""
+import logging
+import uuid
+import asyncio
+from datetime import datetime
+from typing import Dict, Any, Optional
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from pydantic import BaseModel
+from supabase import acreate_client
+
+from config import Config
+
+# Configure logging
+logging.basicConfig(
+    level=Config.LOG_LEVEL,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+)
+logger = logging.getLogger(__name__)
+
+# Global reference to worker instance (set by main.py)
+worker_instance = None
+
+app = FastAPI(title="RAG Scraper API")
+
+
+class StartBulkResponse(BaseModel):
+    """Response model for starting bulk scrape."""
+    task_id: str
+    status: str
+    queued_urls: int
+
+
+class StatusResponse(BaseModel):
+    """Response model for bulk scrape status."""
+    task_id: Optional[str]
+    status: str
+    total_urls: int
+    processed_urls: int
+    failed_urls: int
+    percentage: float
+
+
+class StopResponse(BaseModel):
+    """Response model for stopping scrape work."""
+    status: str
+    urls_processed: int
+    message: str
+
+
+class ValidationResponse(BaseModel):
+    """Response model for validation."""
+    status: str
+    validation: Dict[str, Any]
+
+
+class ValidateFixResponse(BaseModel):
+    """Response model for validate and fix."""
+    task_id: str
+    status: str
+    issues_found: int
+    fixed_urls: int
+
+
+def set_worker_instance(worker):
+    """Set global reference to worker instance."""
+    global worker_instance
+    worker_instance = worker
+    logger.info("Worker instance registered with API")
+
+
+@app.get("/health_check")
+async def health_check():
+    """
+    Health check endpoint.
+    Returns service status, browser state, and request counts.
+    """
+    if not worker_instance:
+        return {
+            "status": "unhealthy",
+            "message": "Worker not initialized",
+            "browser_warm": False,
+            "requests_processed": 0,
+        }
+    
+    try:
+        browser_status = "warm" if worker_instance.scraper and worker_instance.scraper.browser else "cold"
+        
+        return {
+            "status": "healthy",
+            "message": "Worker running normally",
+            "browser_warm": browser_status,
+            "requests_processed": worker_instance.stats.get('urls_processed', 0),
+            "service_uptime": getattr(worker_instance, 'start_time', 'unknown'),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Health check error: {e}")
+        raise HTTPException(status_code=500, detail=f"Health check failed: {str(e)}")
+
+
+@app.get("/scraping_status", response_model=StatusResponse)
+async def scraping_status():
+    """
+    Get bulk scrape status and progress.
+    Returns task ID, percentage, counts.
+    """
+    if not worker_instance:
+        raise HTTPException(status_code=503, detail="Worker not initialized")
+    
+    try:
+        # Get bulk task state
+        bulk_task = getattr(worker_instance, 'bulk_task', {
+            'task_id': None,
+            'status': 'idle',
+            'total_urls': 0,
+            'processed_urls': 0,
+            'failed_urls': 0,
+            'percentage': 0.0,
+        })
+        
+        # Calculate percentage
+        if bulk_task['total_urls'] > 0:
+            percentage = (bulk_task['processed_urls'] / bulk_task['total_urls']) * 100
+            bulk_task['percentage'] = round(percentage, 2)
+        
+        return StatusResponse(**bulk_task)
+        
+    except Exception as e:
+        logger.error(f"Status check error: {e}")
+        raise HTTPException(status_code=500, detail=f"Status check failed: {str(e)}")
+
+
+@app.post("/start_bulk_scrape", response_model=StartBulkResponse)
+async def start_bulk_scrape(background_tasks: BackgroundTasks):
+    """
+    Start bulk scrape of all pending URLs.
+    Returns task ID immediately, processes in background.
+    """
+    if not worker_instance:
+        raise HTTPException(status_code=503, detail="Worker not initialized")
+    
+    try:
+        # Check if already running
+        bulk_task = getattr(worker_instance, 'bulk_task', {})
+        if bulk_task.get('status') == 'running':
+            raise HTTPException(
+                status_code=409,
+                detail="Bulk scrape already in progress",
+            )
+        
+        # Generate task ID
+        task_id = f"task-{datetime.utcnow().strftime('%Y%m%d')}-{str(uuid.uuid4())[:8]}"
+        
+        # Fetch pending URLs count
+        urls = await worker_instance.fetch_pending_urls(limit=10000)
+        
+        # Initialize bulk task state
+        worker_instance.bulk_task = {
+            'task_id': task_id,
+            'status': 'running',
+            'total_urls': len(urls),
+            'processed_urls': 0,
+            'failed_urls': 0,
+            'percentage': 0.0,
+            'started_at': datetime.utcnow().isoformat(),
+        }
+        
+        # Start background processing
+        background_tasks.add_task(process_bulk_background)
+        
+        logger.info(f"Started bulk scrape task {task_id} with {len(urls)} URLs")
+        
+        return StartBulkResponse(
+            task_id=task_id,
+            status="started",
+            queued_urls=len(urls),
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Start bulk scrape error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to start: {str(e)}")
+
+
+async def process_bulk_background():
+    """Process bulk scrape in background."""
+    if not worker_instance:
+        return
+    
+    try:
+        bulk_task = getattr(worker_instance, 'bulk_task', {})
+        bulk_task['status'] = 'running'
+        
+        # Process URLs until queue empty or stopped
+        while worker_instance.running and bulk_task['status'] == 'running':
+            # Check for stop signal
+            if bulk_task.get('stop_requested'):
+                break
+            
+            # Process batch
+            await worker_instance.process_batch()
+            
+            # Update task state
+            bulk_task['processed_urls'] = worker_instance.stats.get('urls_processed', 0)
+            bulk_task['failed_urls'] = worker_instance.stats.get('urls_failed', 0)
+            
+            if bulk_task['total_urls'] > 0:
+                percentage = (bulk_task['processed_urls'] / bulk_task['total_urls']) * 100
+                bulk_task['percentage'] = round(percentage, 2)
+            
+            # Check if more URLs to process
+            pending = await worker_instance.fetch_pending_urls(limit=1)
+            if not pending:
+                break
+        
+        # Mark as completed
+        bulk_task['status'] = 'completed'
+        bulk_task['stopped_at'] = datetime.utcnow().isoformat()
+        logger.info(f"Bulk task {bulk_task['task_id']} completed")
+        
+    except Exception as e:
+        logger.error(f"Background processing error: {e}")
+        bulk_task = getattr(worker_instance, 'bulk_task', {})
+        bulk_task['status'] = 'error'
+        bulk_task['stopped_at'] = datetime.utcnow().isoformat()
+
+
+@app.post("/stop_scraping_work", response_model=StopResponse)
+async def stop_scraping_work():
+    """
+    Stop bulk scrape work gracefully.
+    Stops after current URL finishes, returns count processed.
+    """
+    if not worker_instance:
+        raise HTTPException(status_code=503, detail="Worker not initialized")
+    
+    try:
+        bulk_task = getattr(worker_instance, 'bulk_task', {})
+        
+        if bulk_task.get('status') != 'running':
+            raise HTTPException(
+                status_code=400,
+                detail="No bulk scrape currently running",
+            )
+        
+        # Set stop flag
+        bulk_task['stop_requested'] = True
+        urls_processed = bulk_task['processed_urls']
+        
+        # Give time for current URL to finish (max 30 seconds)
+        max_wait = 30
+        waited = 0
+        
+        while bulk_task.get('status') == 'running' and waited < max_wait:
+            await asyncio.sleep(1)
+            waited += 1
+        
+        return StopResponse(
+            status="stopping",
+            urls_processed=urls_processed,
+            message=f"Stopping after {urls_processed} URLs processed",
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Stop work error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to stop: {str(e)}")
+
+
+@app.post("/validate", response_model=ValidationResponse)
+async def validate_urls():
+    """
+    Validate URLs for data consistency issues.
+    Returns validation report without fixing.
+    """
+    if not worker_instance:
+        raise HTTPException(status_code=503, detail="Worker not initialized")
+    
+    try:
+        # Fetch all URLs from url_queue
+        response = worker_instance.supabase.table('url_queue').select('*').execute()
+        all_urls = response.data if response.data else []
+        
+        total_urls = len(all_urls)
+        issues = {
+            'missing_documents': [],
+            'stuck_processing': [],
+        }
+        
+        # Check for missing documents
+        completed_urls = [u for u in all_urls if u.get('status') == 'completed']
+        
+        if completed_urls:
+            # Fetch documents for completed URLs
+            urls_with_docs = []
+            for url_entry in completed_urls[:100]:  # Batch to avoid timeouts
+                doc_response = (
+                    worker_instance.supabase
+                    .table('documents')
+                    .select('url')
+                    .eq('url', url_entry['url'])
+                    .limit(1)
+                    .execute()
+                )
+                
+                if doc_response.data:
+                    urls_with_docs.append(url_entry['url'])
+            
+            # Check remaining URLs
+            for url_entry in completed_urls:
+                if url_entry['url'] not in urls_with_docs:
+                    issues['missing_documents'].append(url_entry['url'])
+        
+        # Check for stuck processing
+        from datetime import datetime, timedelta
+        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+        
+        for url_entry in all_urls:
+            if url_entry.get('status') == 'processing':
+                updated_at = url_entry.get('updated_at')
+                if updated_at:
+                    try:
+                        updated_time = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
+                        if updated_time < one_hour_ago:
+                            issues['stuck_processing'].append(url_entry['url'])
+                    except:
+                        pass
+        
+        total_issues = len(issues['missing_documents']) + len(issues['stuck_processing'])
+        success_rate = ((total_urls - total_issues) / total_urls * 100) if total_urls > 0 else 100
+        
+        validation_report = {
+            'total_urls': total_urls,
+            'success_rate': round(success_rate, 2),
+            'total_issues': total_issues,
+            'issues': {
+                'missing_documents': len(issues['missing_documents']),
+                'stuck_processing': len(issues['stuck_processing']),
+            },
+        }
+        
+        return ValidationResponse(
+            status="validated",
+            validation=validation_report,
+        )
+        
+    except Exception as e:
+        logger.error(f"Validation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Validation failed: {str(e)}")
+
+
+@app.post("/validate-fix", response_model=ValidateFixResponse)
+async def validate_fix_urls(background_tasks: BackgroundTasks):
+    """
+    Validate and auto-fix data consistency issues.
+    Returns task ID, fixes in background.
+    """
+    if not worker_instance:
+        raise HTTPException(status_code=503, detail="Worker not initialized")
+    
+    try:
+        # Generate task ID
+        task_id = f"fix-{datetime.utcnow().strftime('%Y%m%d')}-{str(uuid.uuid4())[:8]}"
+        
+        # Start background fix task
+        background_tasks.add_task(fix_background_task, task_id)
+        
+        logger.info(f"Started validation fix task {task_id}")
+        
+        # Quick preview of issues (will be updated by background task)
+        issues_count = 0
+        
+        return ValidateFixResponse(
+            task_id=task_id,
+            status="fixing",
+            issues_found=issues_count,
+            fixed_urls=0,
+        )
+        
+    except Exception as e:
+        logger.error(f"Validate-fix error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to start fix: {str(e)}")
+
+
+async def fix_background_task(task_id: str):
+    """Execute validation fixes in background."""
+    if not worker_instance:
+        return
+    
+    try:
+        stuck_urls_fixed = 0
+        missing_document_urls_fixed = 0
+        
+        # Fix stuck processing URLs
+        from datetime import datetime, timedelta
+        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+        
+        response = worker_instance.supabase.table('url_queue').select('*').execute()
+        all_urls = response.data if response.data else []
+        
+        for url_entry in all_urls:
+            if url_entry.get('status') == 'processing':
+                updated_at = url_entry.get('updated_at')
+                if updated_at:
+                    try:
+                        updated_time = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
+                        if updated_time < one_hour_ago:
+                            # Reset to pending
+                            worker_instance.supabase.table('url_queue').update({
+                                'status': 'pending',
+                                'error_message': None,
+                                'updated_at': datetime.utcnow().isoformat(),
+                            }).eq('id', url_entry['id']).execute()
+                            stuck_urls_fixed += 1
+                    except:
+                        pass
+        
+        # Fix missing documents (reset to pending)
+        completed_urls = [u for u in all_urls if u.get('status') == 'completed']
+        
+        for url_entry in completed_urls[:100]:  # Batch processing
+            doc_response = (
+                worker_instance.supabase
+                .table('documents')
+                .select('url')
+                .eq('url', url_entry['url'])
+                .limit(1)
+                .execute()
+            )
+            
+            if not doc_response.data:
+                # No documents found, reset to pending
+                worker_instance.supabase.table('url_queue').update({
+                    'status': 'pending',
+                    'error_message': 'Missing documents detected',
+                    'updated_at': datetime.utcnow().isoformat(),
+                }).eq('id', url_entry['id']).execute()
+                missing_document_urls_fixed += 1
+        
+        logger.info(f"Fix task {task_id} completed: {stuck_urls_fixed} stuck, {missing_document_urls_fixed} missing docs")
+        
+    except Exception as e:
+        logger.error(f"Background fix error: {e}")
+
+
+# Create app instance for uvicorn
+app_instance = app

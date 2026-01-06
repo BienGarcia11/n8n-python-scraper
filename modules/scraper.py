@@ -37,6 +37,7 @@ class PlaywrightScraper:
         self.playwright = None
         self.browser: Optional[Browser] = None
         self.executable_path = None
+        self.urls_since_restart = 0
         
         # Read browsers path from environment variable if set
         browsers_path = os.getenv('PLAYWRIGHT_BROWSERS_PATH')
@@ -94,6 +95,47 @@ class PlaywrightScraper:
             self.playwright = None
         
         logger.info("Playwright stopped successfully")
+    
+    async def restart_browser(self):
+        """Restart browser to prevent memory leaks."""
+        logger.info("Restarting browser to prevent memory leaks...")
+        
+        # Close existing browser
+        if self.browser:
+            await self.browser.close()
+            self.browser = None
+        
+        # Relaunch browser
+        self.browser = await self.playwright.chromium.launch(
+            headless=self.headless,
+            args=[
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--disable-gpu',
+            ],
+        )
+        
+        # Reset counter
+        self.urls_since_restart = 0
+        
+        logger.info("Browser restarted successfully")
+    
+    def should_restart_browser(self) -> bool:
+        """Check if browser should be restarted (every 30 URLs)."""
+        return self.urls_since_restart >= 30
+    
+    def increment_url_count(self):
+        """Increment URL counter and restart if needed."""
+        self.urls_since_restart += 1
+        
+        if self.should_restart_browser():
+            logger.info("URL count reached threshold, triggering browser restart...")
+            # Note: This will be called from async context
+            # The restart should happen during the next scrape
+            return True
+        return False
     
     def _get_random_user_agent(self) -> str:
         """Get a random user agent from list."""
@@ -160,11 +202,18 @@ class PlaywrightScraper:
         page = None
         
         try:
+            # Check if browser needs restart
+            if self.should_restart_browser():
+                await self.restart_browser()
+            
             # Create isolated context for this URL
             context = await self._create_context()
             page = await context.new_page()
             
             logger.info(f"Navigating to {url}")
+            
+            # Increment URL counter
+            self.increment_url_count()
             
             # Navigate to URL
             response = await page.goto(
