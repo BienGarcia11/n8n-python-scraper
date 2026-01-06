@@ -4,7 +4,7 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install Playwright dependencies only
+# Install Playwright dependencies
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -27,11 +27,6 @@ RUN apt-get update && apt-get install -y \
     libxfixes3 \
     libxkbcommon0 \
     libxrandr2 \
-    libglib2.0-0 \
-    libxkbcommon-x11-0 \
-    libxdamage1 \
-    libxfixes3 \
-    libxrandr2 \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
@@ -41,7 +36,8 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browser
+# Install Playwright browsers BEFORE switching to non-root user
+# Browsers are installed to /root/.cache/ms-playwright by default
 RUN python -m playwright install chromium
 
 # Copy application files
@@ -50,11 +46,12 @@ COPY .env.example .env
 
 # Create a non-root user
 RUN useradd -m -u 1000 scraperuser && chown -R scraperuser:scraperuser /app
-USER scraperuser
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+# Switch to non-root user
+USER scraperuser
 
 # Run the scraper
 CMD ["python", "scraper.py"]
