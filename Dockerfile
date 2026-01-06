@@ -1,20 +1,10 @@
-# Use Ubuntu 22.04 instead of Debian for better Playwright compatibility
-FROM ubuntu:22.04
+# Use official Python 3.11 image (based on Debian Bookworm)
+FROM python:3.11-slim
 
 # Set working directory
 WORKDIR /app
 
-# Install Python 3.11
-RUN apt-get update && apt-get install -y \
-    software-properties-common \
-    && add-apt-repository ppa:deadsnakes/ppa \
-    && apt-get update \
-    && apt-get install -y python3.11 python3.11-venv python3-pip
-
-# Create symlink for python
-RUN ln -s /usr/bin/python3.11 /usr/bin/python
-
-# Install system dependencies for Playwright
+# Install Playwright dependencies only
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -37,6 +27,11 @@ RUN apt-get update && apt-get install -y \
     libxfixes3 \
     libxkbcommon0 \
     libxrandr2 \
+    libglib2.0-0 \
+    libxkbcommon-x11-0 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
@@ -44,9 +39,9 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 
 # Install Python dependencies
-RUN python -m pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browsers
+# Install Playwright browser
 RUN python -m playwright install chromium
 
 # Copy application files
