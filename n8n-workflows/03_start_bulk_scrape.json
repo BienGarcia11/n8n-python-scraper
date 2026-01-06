@@ -1,0 +1,68 @@
+{
+    "nodes": [
+        {
+            "parameters": {},
+            "id": "g7h8i9j0-k1l2-3456-ghij-kl7890123456",
+            "name": "Manual Trigger",
+            "type": "n8n-nodes-base.manualTrigger",
+            "typeVersion": 1,
+            "position": [
+                3904,
+                -240
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://n8n-python-scraper-production.up.railway.app/start_bulk_scrape",
+                "options": {}
+            },
+            "id": "h8i9j0k1-l2m3-4567-hijk-lm8901234567",
+            "name": "Start Bulk Scrape",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                4128,
+                -240
+            ]
+        },
+        {
+            "parameters": {
+                "content": "## Start Bulk Scrape\n\n**Trigger**: Manual only\n\n**Purpose**: Start scraping all pending URLs in queue\n\n**Endpoint**: POST /start_bulk_scrape\n\n**Response**:\n- task_id: Unique task identifier\n- status: 'started'\n- queued_urls: Number of URLs queued for processing\n\n**Behavior**:\n- Scrapes all URLs with status 'pending'\n- Processes URLs in batches for efficiency\n- Runs in background (returns immediately)\n- Can be monitored via /scraping_status\n- Can be stopped via /stop_scraping_work\n\n**Use Case**: Start full scraping job when new URLs are added to queue.",
+                "height": 544,
+                "width": 816
+            },
+            "id": "i9j0k1l2-m3n4-5678-ijkl-mn9012345678",
+            "name": "Start Documentation",
+            "type": "n8n-nodes-base.stickyNote",
+            "typeVersion": 1,
+            "position": [
+                3776,
+                -592
+            ]
+        }
+    ],
+    "connections": {
+        "Manual Trigger": {
+            "main": [
+                [
+                    {
+                        "node": "Start Bulk Scrape",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Start Bulk Scrape": {
+            "main": [
+                []
+            ]
+        }
+    },
+    "pinData": {},
+    "meta": {
+        "templateCredsSetupCompleted": true,
+        "instanceId": "start_bulk_scrape_workflow"
+    }
+}

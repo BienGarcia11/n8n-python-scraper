@@ -1,0 +1,68 @@
+{
+    "nodes": [
+        {
+            "parameters": {},
+            "id": "m3n4o5p6-q7r8-9012-lmno-qr1234567890",
+            "name": "Manual Trigger",
+            "type": "n8n-nodes-base.manualTrigger",
+            "typeVersion": 1,
+            "position": [
+                3904,
+                -240
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://n8n-python-scraper-production.up.railway.app/validate",
+                "options": {}
+            },
+            "id": "n4o5p6q7-r8s9-0123-mnop-rs12345678901",
+            "name": "Validate URLs",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                4128,
+                -240
+            ]
+        },
+        {
+            "parameters": {
+                "content": "## Validate URLs\n\n**Trigger**: Manual only\n\n**Purpose**: Check data consistency across URL queue and documents\n\n**Endpoint**: POST /validate\n\n**Response**:\n- total_urls: Total URLs in queue\n- success_rate: Percentage (0-100)\n- total_issues: Number of issues found\n- issues.stuck_processing: URLs stuck in 'processing' > 3 minutes\n- issues.missing_documents: Completed URLs without documents\n- issues.failed_urls: URLs that failed to scrape\n- failed_urls: List of up to 50 failed URLs with details\n\n**Performance**:\n- Uses batch lookups (83x faster than 1-by-1)\n- Handles unlimited URLs (1K, 10K, 100K, 1M+)\n- Returns in seconds for 5K URLs\n\n**Use Case**: Identify stuck, missing, or failed URLs before running validate-fix.",
+                "height": 544,
+                "width": 816
+            },
+            "id": "o5p6q7r8-s9t0-1234-nopr-st23456789012",
+            "name": "Validation Documentation",
+            "type": "n8n-nodes-base.stickyNote",
+            "typeVersion": 1,
+            "position": [
+                3776,
+                -592
+            ]
+        }
+    ],
+    "connections": {
+        "Manual Trigger": {
+            "main": [
+                [
+                    {
+                        "node": "Validate URLs",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Validate URLs": {
+            "main": [
+                []
+            ]
+        }
+    },
+    "pinData": {},
+    "meta": {
+        "templateCredsSetupCompleted": true,
+        "instanceId": "validate_urls_workflow"
+    }
+}

@@ -1,0 +1,68 @@
+{
+    "nodes": [
+        {
+            "parameters": {},
+            "id": "p6q7r8s9-t0u1-2345-nopq-st34567890123",
+            "name": "Manual Trigger",
+            "type": "n8n-nodes-base.manualTrigger",
+            "typeVersion": 1,
+            "position": [
+                3904,
+                -240
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://n8n-python-scraper-production.up.railway.app/validate-fix",
+                "options": {}
+            },
+            "id": "q7r8s9t0-u1v2-3456-opqr-tu45678901234",
+            "name": "Validate and Fix",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [
+                4128,
+                -240
+            ]
+        },
+        {
+            "parameters": {
+                "content": "## Validate and Fix\n\n**Trigger**: Manual only\n\n**Purpose**: Automatically fix data consistency issues\n\n**Endpoint**: POST /validate-fix\n\n**Response**:\n- task_id: Unique task identifier\n- status: 'fixing'\n- issues_found: Number of issues detected\n- fixed_urls: Number of URLs fixed (updates as task runs)\n\n**Auto-Fixes**:\n- Stuck processing URLs: Reset to 'pending', clear errors, reset attempts\n- Missing documents: Completed URLs without docs reset to 'pending'\n- Failed URLs: NOT auto-fixed (requires manual review)\n\n**Behavior**:\n- Runs in background (returns immediately)\n- Processes URLs in batches for efficiency\n- Can monitor progress via logs\n\n**Performance**:\n- Uses pagination for unlimited URLs\n- Optimized batch lookups (100x faster)\n\n**Use Case**: Run after /validate identifies issues. Fixes stuck and missing-docs URLs automatically while preserving failed URLs for manual review.",
+                "height": 544,
+                "width": 816
+            },
+            "id": "r8s9t0u1-v2w3-4567-pqrs-uv56789012345",
+            "name": "Fix Documentation",
+            "type": "n8n-nodes-base.stickyNote",
+            "typeVersion": 1,
+            "position": [
+                3776,
+                -592
+            ]
+        }
+    ],
+    "connections": {
+        "Manual Trigger": {
+            "main": [
+                [
+                    {
+                        "node": "Validate and Fix",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Validate and Fix": {
+            "main": [
+                []
+            ]
+        }
+    },
+    "pinData": {},
+    "meta": {
+        "templateCredsSetupCompleted": true,
+        "instanceId": "validate_and_fix_workflow"
+    }
+}
