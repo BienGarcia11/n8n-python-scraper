@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# Install system dependencies
+# Install system dependencies for Playwright
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -40,16 +40,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Create non-root user for security
 RUN useradd -m -u 1000 worker
 
-# Switch to non-root user before installing Playwright
+# Switch to non-root user
 USER worker
 
 # Environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/worker/.cache/ms-playwright
 
-# Install Playwright browsers as non-root user
-RUN playwright install chromium && \
-    playwright install-deps chromium
+# Install Playwright browser only (no install-deps needed - system deps already installed)
+RUN playwright install chromium
 
 # Copy application code
 COPY . .
@@ -62,5 +61,5 @@ RUN mkdir -p modules && \
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import asyncio; from main import RAGScraperWorker; print('Worker OK')" || exit 1
 
-# Run the worker
+# Run worker
 CMD ["python", "main.py"]
