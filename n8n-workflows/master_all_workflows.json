@@ -1,426 +1,424 @@
-{
-    "workflows": [
-        {
-            "name": "Health Check",
-            "nodes": [
-                {
-                    "parameters": {
-                        "rule": {
-                            "interval": [
-                                {
-                                    "minutesInterval": 5
-                                }
-                            ]
+[
+    {
+        "name": "Health Check",
+        "nodes": [
+            {
+                "parameters": {
+                    "rule": {
+                        "interval": [
+                            {
+                                "minutesInterval": 5
+                            }
+                        ]
+                    }
+                },
+                "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                "name": "Schedule: Health Check",
+                "type": "n8n-nodes-base.scheduleTrigger",
+                "typeVersion": 1.3,
+                "position": [
+                    3904,
+                    -240
+                ]
+            },
+            {
+                "parameters": {
+                    "method": "GET",
+                    "url": "https://n8n-python-scraper-production.up.railway.app/health_check",
+                    "options": {}
+                },
+                "id": "b2c3d4e5-f6g7-8901-bcde-fg2345678901",
+                "name": "Health Check API",
+                "type": "n8n-nodes-base.httpRequest",
+                "typeVersion": 4.3,
+                "position": [
+                    4128,
+                    -240
+                ]
+            },
+            {
+                "parameters": {
+                    "content": "## Health Check Monitoring\n\n**Schedule**: Every 5 minutes\n\n**Purpose**: Monitor scraper service health\n\n**Endpoint**: GET /health_check\n\n**Response**:\n- status: 'healthy' or 'unhealthy'\n- browser_warm: 'warm' or 'cold'\n- requests_processed: total URLs processed\n- service_uptime: how long service has been running\n\n**Use Case**: Monitor if scraper is running and browser is ready for scraping tasks.",
+                    "height": 544,
+                    "width": 816
+                },
+                "id": "c3d4e5f6-g7h8-9012-cdef-gh3456789012",
+                "name": "Health Monitoring",
+                "type": "n8n-nodes-base.stickyNote",
+                "typeVersion": 1,
+                "position": [
+                    3776,
+                    -592
+                ]
+            }
+        ],
+        "connections": {
+            "Schedule: Health Check": {
+                "main": [
+                    [
+                        {
+                            "node": "Health Check API",
+                            "type": "main",
+                            "index": 0
                         }
-                    },
-                    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-                    "name": "Schedule: Health Check",
-                    "type": "n8n-nodes-base.scheduleTrigger",
-                    "typeVersion": 1.3,
-                    "position": [
-                        3904,
-                        -240
                     ]
-                },
-                {
-                    "parameters": {
-                        "method": "GET",
-                        "url": "https://n8n-python-scraper-production.up.railway.app/health_check",
-                        "options": {}
-                    },
-                    "id": "b2c3d4e5-f6g7-8901-bcde-fg2345678901",
-                    "name": "Health Check API",
-                    "type": "n8n-nodes-base.httpRequest",
-                    "typeVersion": 4.3,
-                    "position": [
-                        4128,
-                        -240
-                    ]
-                },
-                {
-                    "parameters": {
-                        "content": "## Health Check Monitoring\n\n**Schedule**: Every 5 minutes\n\n**Purpose**: Monitor scraper service health\n\n**Endpoint**: GET /health_check\n\n**Response**:\n- status: 'healthy' or 'unhealthy'\n- browser_warm: 'warm' or 'cold'\n- requests_processed: total URLs processed\n- service_uptime: how long service has been running\n\n**Use Case**: Monitor if scraper is running and browser is ready for scraping tasks.",
-                        "height": 544,
-                        "width": 816
-                    },
-                    "id": "c3d4e5f6-g7h8-9012-cdef-gh3456789012",
-                    "name": "Health Monitoring",
-                    "type": "n8n-nodes-base.stickyNote",
-                    "typeVersion": 1,
-                    "position": [
-                        3776,
-                        -592
-                    ]
-                }
-            ],
-            "connections": {
-                "Schedule: Health Check": {
-                    "main": [
-                        [
-                            {
-                                "node": "Health Check API",
-                                "type": "main",
-                                "index": 0
-                            }
-                        ]
-                    ]
-                },
-                "Health Check API": {
-                    "main": [
-                        []
-                    ]
-                }
+                ]
             },
-            "pinData": {},
-            "meta": {
-                "templateCredsSetupCompleted": true,
-                "instanceId": "health_check_monitoring_workflow"
+            "Health Check API": {
+                "main": [
+                    []
+                ]
             }
         },
-        {
-            "name": "Scraping Status",
-            "nodes": [
-                {
-                    "parameters": {},
-                    "id": "d4e5f6g7-h8i9-0123-defg-hi4567890123",
-                    "name": "Manual Trigger",
-                    "type": "n8n-nodes-base.manualTrigger",
-                    "typeVersion": 1,
-                    "position": [
-                        3904,
-                        -240
-                    ]
-                },
-                {
-                    "parameters": {
-                        "method": "GET",
-                        "url": "https://n8n-python-scraper-production.up.railway.app/scraping_status",
-                        "options": {}
-                    },
-                    "id": "e5f6g7h8-i9j0-1234-efgh-ij5678901234",
-                    "name": "Get Scrape Status",
-                    "type": "n8n-nodes-base.httpRequest",
-                    "typeVersion": 4.3,
-                    "position": [
-                        4128,
-                        -240
-                    ]
-                },
-                {
-                    "parameters": {
-                        "content": "## Scraping Status Check\n\n**Trigger**: Manual only\n\n**Purpose**: Get current bulk scrape progress\n\n**Endpoint**: GET /scraping_status\n\n**Response**:\n- task_id: Unique task identifier\n- status: 'idle', 'running', 'completed', or 'error'\n- total_urls: Total URLs in queue\n- processed_urls: URLs successfully processed\n- failed_urls: URLs that failed\n- percentage: Completion percentage (0-100)\n\n**Use Case**: Monitor bulk scrape progress in real-time without waiting for completion.",
-                        "height": 544,
-                        "width": 816
-                    },
-                    "id": "f6g7h8i9-j0k1-2345-fghi-jk6789012345",
-                    "name": "Status Documentation",
-                    "type": "n8n-nodes-base.stickyNote",
-                    "typeVersion": 1,
-                    "position": [
-                        3776,
-                        -592
-                    ]
-                }
-            ],
-            "connections": {
-                "Manual Trigger": {
-                    "main": [
-                        [
-                            {
-                                "node": "Get Scrape Status",
-                                "type": "main",
-                                "index": 0
-                            }
-                        ]
-                    ]
-                },
-                "Get Scrape Status": {
-                    "main": [
-                        []
-                    ]
-                }
-            },
-            "pinData": {},
-            "meta": {
-                "templateCredsSetupCompleted": true,
-                "instanceId": "scraping_status_check_workflow"
-            }
-        },
-        {
-            "name": "Start Bulk Scrape",
-            "nodes": [
-                {
-                    "parameters": {},
-                    "id": "g7h8i9j0-k1l2-3456-ghij-kl7890123456",
-                    "name": "Manual Trigger",
-                    "type": "n8n-nodes-base.manualTrigger",
-                    "typeVersion": 1,
-                    "position": [
-                        3904,
-                        -240
-                    ]
-                },
-                {
-                    "parameters": {
-                        "method": "POST",
-                        "url": "https://n8n-python-scraper-production.up.railway.app/start_bulk_scrape",
-                        "options": {}
-                    },
-                    "id": "h8i9j0k1-l2m3-4567-hijk-lm8901234567",
-                    "name": "Start Bulk Scrape",
-                    "type": "n8n-nodes-base.httpRequest",
-                    "typeVersion": 4.3,
-                    "position": [
-                        4128,
-                        -240
-                    ]
-                },
-                {
-                    "parameters": {
-                        "content": "## Start Bulk Scrape\n\n**Trigger**: Manual only\n\n**Purpose**: Start scraping all pending URLs in queue\n\n**Endpoint**: POST /start_bulk_scrape\n\n**Response**:\n- task_id: Unique task identifier\n- status: 'started'\n- queued_urls: Number of URLs queued for processing\n\n**Behavior**:\n- Scrapes all URLs with status 'pending'\n- Processes URLs in batches for efficiency\n- Runs in background (returns immediately)\n- Can be monitored via /scraping_status\n- Can be stopped via /stop_scraping_work\n\n**Use Case**: Start full scraping job when new URLs are added to queue.",
-                        "height": 544,
-                        "width": 816
-                    },
-                    "id": "i9j0k1l2-m3n4-5678-ijkl-mn9012345678",
-                    "name": "Start Documentation",
-                    "type": "n8n-nodes-base.stickyNote",
-                    "typeVersion": 1,
-                    "position": [
-                        3776,
-                        -592
-                    ]
-                }
-            ],
-            "connections": {
-                "Manual Trigger": {
-                    "main": [
-                        [
-                            {
-                                "node": "Start Bulk Scrape",
-                                "type": "main",
-                                "index": 0
-                            }
-                        ]
-                    ]
-                },
-                "Start Bulk Scrape": {
-                    "main": [
-                        []
-                    ]
-                }
-            },
-            "pinData": {},
-            "meta": {
-                "templateCredsSetupCompleted": true,
-                "instanceId": "start_bulk_scrape_workflow"
-            }
-        },
-        {
-            "name": "Stop Scraping Work",
-            "nodes": [
-                {
-                    "parameters": {},
-                    "id": "j0k1l2m3-n4o5-6789-ijkl-no9012345678",
-                    "name": "Manual Trigger",
-                    "type": "n8n-nodes-base.manualTrigger",
-                    "typeVersion": 1,
-                    "position": [
-                        3904,
-                        -240
-                    ]
-                },
-                {
-                    "parameters": {
-                        "method": "POST",
-                        "url": "https://n8n-python-scraper-production.up.railway.app/stop_scraping_work",
-                        "options": {}
-                    },
-                    "id": "k1l2m3n4-o5p6-7890-jklm-op9012345678",
-                    "name": "Stop Scraping Work",
-                    "type": "n8n-nodes-base.httpRequest",
-                    "typeVersion": 4.3,
-                    "position": [
-                        4128,
-                        -240
-                    ]
-                },
-                {
-                    "parameters": {
-                        "content": "## Stop Scraping Work\n\n**Trigger**: Manual only\n\n**Purpose**: Gracefully stop currently running bulk scrape\n\n**Endpoint**: POST /stop_scraping_work\n\n**Response**:\n- status: 'stopping'\n- urls_processed: Number of URLs processed before stop\n- message: Confirmation message\n\n**Behavior**:\n- Waits for current URL to finish (max 30 seconds)\n- Does not delete processed data\n- Sets stop flag to halt background task\n- Already-processed URLs remain in database\n\n**Use Case**: Stop scraping job if needed (e.g., to pause or restart with different settings).",
-                        "height": 544,
-                        "width": 816
-                    },
-                    "id": "l2m3n4o5-p6q7-8901-klmn-pq0123456789",
-                    "name": "Stop Documentation",
-                    "type": "n8n-nodes-base.stickyNote",
-                    "typeVersion": 1,
-                    "position": [
-                        3776,
-                        -592
-                    ]
-                }
-            ],
-            "connections": {
-                "Manual Trigger": {
-                    "main": [
-                        [
-                            {
-                                "node": "Stop Scraping Work",
-                                "type": "main",
-                                "index": 0
-                            }
-                        ]
-                    ]
-                },
-                "Stop Scraping Work": {
-                    "main": [
-                        []
-                    ]
-                }
-            },
-            "pinData": {},
-            "meta": {
-                "templateCredsSetupCompleted": true,
-                "instanceId": "stop_scraping_work_workflow"
-            }
-        },
-        {
-            "name": "Validate URLs",
-            "nodes": [
-                {
-                    "parameters": {},
-                    "id": "m3n4o5p6-q7r8-9012-lmno-qr1234567890",
-                    "name": "Manual Trigger",
-                    "type": "n8n-nodes-base.manualTrigger",
-                    "typeVersion": 1,
-                    "position": [
-                        3904,
-                        -240
-                    ]
-                },
-                {
-                    "parameters": {
-                        "method": "POST",
-                        "url": "https://n8n-python-scraper-production.up.railway.app/validate",
-                        "options": {}
-                    },
-                    "id": "n4o5p6q7-r8s9-0123-mnop-rs12345678901",
-                    "name": "Validate URLs",
-                    "type": "n8n-nodes-base.httpRequest",
-                    "typeVersion": 4.3,
-                    "position": [
-                        4128,
-                        -240
-                    ]
-                },
-                {
-                    "parameters": {
-                        "content": "## Validate URLs\n\n**Trigger**: Manual only\n\n**Purpose**: Check data consistency across URL queue and documents\n\n**Endpoint**: POST /validate\n\n**Response**:\n- total_urls: Total URLs in queue\n- success_rate: Percentage (0-100)\n- total_issues: Number of issues found\n- issues.stuck_processing: URLs stuck in 'processing' > 3 minutes\n- issues.missing_documents: Completed URLs without documents\n- issues.failed_urls: URLs that failed to scrape\n- failed_urls: List of up to 50 failed URLs with details\n\n**Performance**:\n- Uses batch lookups (83x faster than 1-by-1)\n- Handles unlimited URLs (1K, 10K, 100K, 1M+)\n- Returns in seconds for 5K URLs\n\n**Use Case**: Identify stuck, missing, or failed URLs before running validate-fix.",
-                        "height": 544,
-                        "width": 816
-                    },
-                    "id": "o5p6q7r8-s9t0-1234-nopr-st23456789012",
-                    "name": "Validation Documentation",
-                    "type": "n8n-nodes-base.stickyNote",
-                    "typeVersion": 1,
-                    "position": [
-                        3776,
-                        -592
-                    ]
-                }
-            ],
-            "connections": {
-                "Manual Trigger": {
-                    "main": [
-                        [
-                            {
-                                "node": "Validate URLs",
-                                "type": "main",
-                                "index": 0
-                            }
-                        ]
-                    ]
-                },
-                "Validate URLs": {
-                    "main": [
-                        []
-                    ]
-                }
-            },
-            "pinData": {},
-            "meta": {
-                "templateCredsSetupCompleted": true,
-                "instanceId": "validate_urls_workflow"
-            }
-        },
-        {
-            "name": "Validate and Fix",
-            "nodes": [
-                {
-                    "parameters": {},
-                    "id": "p6q7r8s9-t0u1-2345-nopq-st34567890123",
-                    "name": "Manual Trigger",
-                    "type": "n8n-nodes-base.manualTrigger",
-                    "typeVersion": 1,
-                    "position": [
-                        3904,
-                        -240
-                    ]
-                },
-                {
-                    "parameters": {
-                        "method": "POST",
-                        "url": "https://n8n-python-scraper-production.up.railway.app/validate-fix",
-                        "options": {}
-                    },
-                    "id": "q7r8s9t0-u1v2-3456-opqr-tu45678901234",
-                    "name": "Validate and Fix",
-                    "type": "n8n-nodes-base.httpRequest",
-                    "typeVersion": 4.3,
-                    "position": [
-                        4128,
-                        -240
-                    ]
-                },
-                {
-                    "parameters": {
-                        "content": "## Validate and Fix\n\n**Trigger**: Manual only\n\n**Purpose**: Automatically fix data consistency issues\n\n**Endpoint**: POST /validate-fix\n\n**Response**:\n- task_id: Unique task identifier\n- status: 'fixing'\n- issues_found: Number of issues detected\n- fixed_urls: Number of URLs fixed (updates as task runs)\n\n**Auto-Fixes**:\n- Stuck processing URLs: Reset to 'pending', clear errors, reset attempts\n- Missing documents: Completed URLs without docs reset to 'pending'\n- Failed URLs: NOT auto-fixed (requires manual review)\n\n**Behavior**:\n- Runs in background (returns immediately)\n- Processes URLs in batches for efficiency\n- Can monitor progress via logs\n\n**Performance**:\n- Uses pagination for unlimited URLs\n- Optimized batch lookups (100x faster)\n\n**Use Case**: Run after /validate identifies issues. Fixes stuck and missing-docs URLs automatically while preserving failed URLs for manual review.",
-                        "height": 544,
-                        "width": 816
-                    },
-                    "id": "r8s9t0u1-v2w3-4567-pqrs-uv56789012345",
-                    "name": "Fix Documentation",
-                    "type": "n8n-nodes-base.stickyNote",
-                    "typeVersion": 1,
-                    "position": [
-                        3776,
-                        -592
-                    ]
-                }
-            ],
-            "connections": {
-                "Manual Trigger": {
-                    "main": [
-                        [
-                            {
-                                "node": "Validate and Fix",
-                                "type": "main",
-                                "index": 0
-                            }
-                        ]
-                    ]
-                },
-                "Validate and Fix": {
-                    "main": [
-                        []
-                    ]
-                }
-            },
-            "pinData": {},
-            "meta": {
-                "templateCredsSetupCompleted": true,
-                "instanceId": "validate_and_fix_workflow"
-            }
+        "pinData": {},
+        "meta": {
+            "templateCredsSetupCompleted": true,
+            "instanceId": "health_check_monitoring_workflow"
         }
-    ]
-}
+    },
+    {
+        "name": "Scraping Status",
+        "nodes": [
+            {
+                "parameters": {},
+                "id": "d4e5f6g7-h8i9-0123-defg-hi4567890123",
+                "name": "Manual Trigger",
+                "type": "n8n-nodes-base.manualTrigger",
+                "typeVersion": 1,
+                "position": [
+                    3904,
+                    -240
+                ]
+            },
+            {
+                "parameters": {
+                    "method": "GET",
+                    "url": "https://n8n-python-scraper-production.up.railway.app/scraping_status",
+                    "options": {}
+                },
+                "id": "e5f6g7h8-i9j0-1234-efgh-ij5678901234",
+                "name": "Get Scrape Status",
+                "type": "n8n-nodes-base.httpRequest",
+                "typeVersion": 4.3,
+                "position": [
+                    4128,
+                    -240
+                ]
+            },
+            {
+                "parameters": {
+                    "content": "## Scraping Status Check\n\n**Trigger**: Manual only\n\n**Purpose**: Get current bulk scrape progress\n\n**Endpoint**: GET /scraping_status\n\n**Response**:\n- task_id: Unique task identifier\n- status: 'idle', 'running', 'completed', or 'error'\n- total_urls: Total URLs in queue\n- processed_urls: URLs successfully processed\n- failed_urls: URLs that failed\n- percentage: Completion percentage (0-100)\n\n**Use Case**: Monitor bulk scrape progress in real-time without waiting for completion.",
+                    "height": 544,
+                    "width": 816
+                },
+                "id": "f6g7h8i9-j0k1-2345-fghi-jk6789012345",
+                "name": "Status Documentation",
+                "type": "n8n-nodes-base.stickyNote",
+                "typeVersion": 1,
+                "position": [
+                    3776,
+                    -592
+                ]
+            }
+        ],
+        "connections": {
+            "Manual Trigger": {
+                "main": [
+                    [
+                        {
+                            "node": "Get Scrape Status",
+                            "type": "main",
+                            "index": 0
+                        }
+                    ]
+                ]
+            },
+            "Get Scrape Status": {
+                "main": [
+                    []
+                ]
+            }
+        },
+        "pinData": {},
+        "meta": {
+            "templateCredsSetupCompleted": true,
+            "instanceId": "scraping_status_check_workflow"
+        }
+    },
+    {
+        "name": "Start Bulk Scrape",
+        "nodes": [
+            {
+                "parameters": {},
+                "id": "g7h8i9j0-k1l2-3456-ghij-kl7890123456",
+                "name": "Manual Trigger",
+                "type": "n8n-nodes-base.manualTrigger",
+                "typeVersion": 1,
+                "position": [
+                    3904,
+                    -240
+                ]
+            },
+            {
+                "parameters": {
+                    "method": "POST",
+                    "url": "https://n8n-python-scraper-production.up.railway.app/start_bulk_scrape",
+                    "options": {}
+                },
+                "id": "h8i9j0k1-l2m3-4567-hijk-lm8901234567",
+                "name": "Start Bulk Scrape",
+                "type": "n8n-nodes-base.httpRequest",
+                "typeVersion": 4.3,
+                "position": [
+                    4128,
+                    -240
+                ]
+            },
+            {
+                "parameters": {
+                    "content": "## Start Bulk Scrape\n\n**Trigger**: Manual only\n\n**Purpose**: Start scraping all pending URLs in queue\n\n**Endpoint**: POST /start_bulk_scrape\n\n**Response**:\n- task_id: Unique task identifier\n- status: 'started'\n- queued_urls: Number of URLs queued for processing\n\n**Behavior**:\n- Scrapes all URLs with status 'pending'\n- Processes URLs in batches for efficiency\n- Runs in background (returns immediately)\n- Can be monitored via /scraping_status\n- Can be stopped via /stop_scraping_work\n\n**Use Case**: Start full scraping job when new URLs are added to queue.",
+                    "height": 544,
+                    "width": 816
+                },
+                "id": "i9j0k1l2-m3n4-5678-ijkl-mn9012345678",
+                "name": "Start Documentation",
+                "type": "n8n-nodes-base.stickyNote",
+                "typeVersion": 1,
+                "position": [
+                    3776,
+                    -592
+                ]
+            }
+        ],
+        "connections": {
+            "Manual Trigger": {
+                "main": [
+                    [
+                        {
+                            "node": "Start Bulk Scrape",
+                            "type": "main",
+                            "index": 0
+                        }
+                    ]
+                ]
+            },
+            "Start Bulk Scrape": {
+                "main": [
+                    []
+                ]
+            }
+        },
+        "pinData": {},
+        "meta": {
+            "templateCredsSetupCompleted": true,
+            "instanceId": "start_bulk_scrape_workflow"
+        }
+    },
+    {
+        "name": "Stop Scraping Work",
+        "nodes": [
+            {
+                "parameters": {},
+                "id": "j0k1l2m3-n4o5-6789-ijkl-no9012345678",
+                "name": "Manual Trigger",
+                "type": "n8n-nodes-base.manualTrigger",
+                "typeVersion": 1,
+                "position": [
+                    3904,
+                    -240
+                ]
+            },
+            {
+                "parameters": {
+                    "method": "POST",
+                    "url": "https://n8n-python-scraper-production.up.railway.app/stop_scraping_work",
+                    "options": {}
+                },
+                "id": "k1l2m3n4-o5p6-7890-jklm-op9012345678",
+                "name": "Stop Scraping Work",
+                "type": "n8n-nodes-base.httpRequest",
+                "typeVersion": 4.3,
+                "position": [
+                    4128,
+                    -240
+                ]
+            },
+            {
+                "parameters": {
+                    "content": "## Stop Scraping Work\n\n**Trigger**: Manual only\n\n**Purpose**: Gracefully stop currently running bulk scrape\n\n**Endpoint**: POST /stop_scraping_work\n\n**Response**:\n- status: 'stopping'\n- urls_processed: Number of URLs processed before stop\n- message: Confirmation message\n\n**Behavior**:\n- Waits for current URL to finish (max 30 seconds)\n- Does not delete processed data\n- Sets stop flag to halt background task\n- Already-processed URLs remain in database\n\n**Use Case**: Stop scraping job if needed (e.g., to pause or restart with different settings).",
+                    "height": 544,
+                    "width": 816
+                },
+                "id": "l2m3n4o5-p6q7-8901-klmn-pq0123456789",
+                "name": "Stop Documentation",
+                "type": "n8n-nodes-base.stickyNote",
+                "typeVersion": 1,
+                "position": [
+                    3776,
+                    -592
+                ]
+            }
+        ],
+        "connections": {
+            "Manual Trigger": {
+                "main": [
+                    [
+                        {
+                            "node": "Stop Scraping Work",
+                            "type": "main",
+                            "index": 0
+                        }
+                    ]
+                ]
+            },
+            "Stop Scraping Work": {
+                "main": [
+                    []
+                ]
+            }
+        },
+        "pinData": {},
+        "meta": {
+            "templateCredsSetupCompleted": true,
+            "instanceId": "stop_scraping_work_workflow"
+        }
+    },
+    {
+        "name": "Validate URLs",
+        "nodes": [
+            {
+                "parameters": {},
+                "id": "m3n4o5p6-q7r8-9012-lmno-qr1234567890",
+                "name": "Manual Trigger",
+                "type": "n8n-nodes-base.manualTrigger",
+                "typeVersion": 1,
+                "position": [
+                    3904,
+                    -240
+                ]
+            },
+            {
+                "parameters": {
+                    "method": "POST",
+                    "url": "https://n8n-python-scraper-production.up.railway.app/validate",
+                    "options": {}
+                },
+                "id": "n4o5p6q7-r8s9-0123-mnop-rs12345678901",
+                "name": "Validate URLs",
+                "type": "n8n-nodes-base.httpRequest",
+                "typeVersion": 4.3,
+                "position": [
+                    4128,
+                    -240
+                ]
+            },
+            {
+                "parameters": {
+                    "content": "## Validate URLs\n\n**Trigger**: Manual only\n\n**Purpose**: Check data consistency across URL queue and documents\n\n**Endpoint**: POST /validate\n\n**Response**:\n- total_urls: Total URLs in queue\n- success_rate: Percentage (0-100)\n- total_issues: Number of issues found\n- issues.stuck_processing: URLs stuck in 'processing' > 3 minutes\n- issues.missing_documents: Completed URLs without documents\n- issues.failed_urls: URLs that failed to scrape\n- failed_urls: List of up to 50 failed URLs with details\n\n**Performance**:\n- Uses batch lookups (83x faster than 1-by-1)\n- Handles unlimited URLs (1K, 10K, 100K, 1M+)\n- Returns in seconds for 5K URLs\n\n**Use Case**: Identify stuck, missing, or failed URLs before running validate-fix.",
+                    "height": 544,
+                    "width": 816
+                },
+                "id": "o5p6q7r8-s9t0-1234-nopr-st23456789012",
+                "name": "Validation Documentation",
+                "type": "n8n-nodes-base.stickyNote",
+                "typeVersion": 1,
+                "position": [
+                    3776,
+                    -592
+                ]
+            }
+        ],
+        "connections": {
+            "Manual Trigger": {
+                "main": [
+                    [
+                        {
+                            "node": "Validate URLs",
+                            "type": "main",
+                            "index": 0
+                        }
+                    ]
+                ]
+            },
+            "Validate URLs": {
+                "main": [
+                    []
+                ]
+            }
+        },
+        "pinData": {},
+        "meta": {
+            "templateCredsSetupCompleted": true,
+            "instanceId": "validate_urls_workflow"
+        }
+    },
+    {
+        "name": "Validate and Fix",
+        "nodes": [
+            {
+                "parameters": {},
+                "id": "p6q7r8s9-t0u1-2345-nopq-st34567890123",
+                "name": "Manual Trigger",
+                "type": "n8n-nodes-base.manualTrigger",
+                "typeVersion": 1,
+                "position": [
+                    3904,
+                    -240
+                ]
+            },
+            {
+                "parameters": {
+                    "method": "POST",
+                    "url": "https://n8n-python-scraper-production.up.railway.app/validate-fix",
+                    "options": {}
+                },
+                "id": "q7r8s9t0-u1v2-3456-opqr-tu45678901234",
+                "name": "Validate and Fix",
+                "type": "n8n-nodes-base.httpRequest",
+                "typeVersion": 4.3,
+                "position": [
+                    4128,
+                    -240
+                ]
+            },
+            {
+                "parameters": {
+                    "content": "## Validate and Fix\n\n**Trigger**: Manual only\n\n**Purpose**: Automatically fix data consistency issues\n\n**Endpoint**: POST /validate-fix\n\n**Response**:\n- task_id: Unique task identifier\n- status: 'fixing'\n- issues_found: Number of issues detected\n- fixed_urls: Number of URLs fixed (updates as task runs)\n\n**Auto-Fixes**:\n- Stuck processing URLs: Reset to 'pending', clear errors, reset attempts\n- Missing documents: Completed URLs without docs reset to 'pending'\n- Failed URLs: NOT auto-fixed (requires manual review)\n\n**Behavior**:\n- Runs in background (returns immediately)\n- Processes URLs in batches for efficiency\n- Can monitor progress via logs\n\n**Performance**:\n- Uses pagination for unlimited URLs\n- Optimized batch lookups (100x faster)\n\n**Use Case**: Run after /validate identifies issues. Fixes stuck and missing-docs URLs automatically while preserving failed URLs for manual review.",
+                    "height": 544,
+                    "width": 816
+                },
+                "id": "r8s9t0u1-v2w3-4567-pqrs-uv56789012345",
+                "name": "Fix Documentation",
+                "type": "n8n-nodes-base.stickyNote",
+                "typeVersion": 1,
+                "position": [
+                    3776,
+                    -592
+                ]
+            }
+        ],
+        "connections": {
+            "Manual Trigger": {
+                "main": [
+                    [
+                        {
+                            "node": "Validate and Fix",
+                            "type": "main",
+                            "index": 0
+                        }
+                    ]
+                ]
+            },
+            "Validate and Fix": {
+                "main": [
+                    []
+                ]
+            }
+        },
+        "pinData": {},
+        "meta": {
+            "templateCredsSetupCompleted": true,
+            "instanceId": "validate_and_fix_workflow"
+        }
+    }
+]
