@@ -37,23 +37,22 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browsers and dependencies
+# Create non-root user for security
+RUN useradd -m -u 1000 worker
+
+# Switch to non-root user before installing Playwright
+USER worker
+
+# Environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PLAYWRIGHT_BROWSERS_PATH=/home/worker/.cache/ms-playwright
+
+# Install Playwright browsers as non-root user
 RUN playwright install chromium && \
     playwright install-deps chromium
 
 # Copy application code
 COPY . .
-
-# Create non-root user for security
-RUN useradd -m -u 1000 worker && \
-    chown -R worker:worker /app
-
-# Switch to non-root user
-USER worker
-
-# Environment variables
-ENV PYTHONUNBUFFERED=1
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # Create modules __init__.py
 RUN mkdir -p modules && \
