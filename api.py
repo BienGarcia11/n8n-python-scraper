@@ -283,6 +283,8 @@ async def validate_urls():
         raise HTTPException(status_code=503, detail="Worker not initialized")
     
     try:
+        from datetime import datetime, timedelta
+        
         # Fetch all URLs from url_queue
         response = await worker_instance.supabase.table('url_queue').select('*').execute()
         all_urls = response.data if response.data else []
@@ -290,11 +292,12 @@ async def validate_urls():
         total_urls = len(all_urls)
         issues = {
             'stuck_processing': [],
+            'missing_documents': [],
+            'failed_urls': [],
         }
         
-        # Check for stuck processing URLs (processing for more than 1 hour)
-        from datetime import datetime, timedelta
-        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+        # Check 1: Stuck processing URLs (processing for more than 3 minutes)
+        three_minutes_ago = datetime.utcnow() - timedelta(minutes=3)
         
         for url_entry in all_urls:
             if url_entry.get('status') == 'processing':
@@ -302,12 +305,56 @@ async def validate_urls():
                 if updated_at:
                     try:
                         updated_time = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
-                        if updated_time < one_hour_ago:
+                        if updated_time < three_minutes_ago:
                             issues['stuck_processing'].append(url_entry['url'])
-                    except:
-                        pass
+                            logger.debug(f"Found stuck processing URL: {url_entry['url']}")
+                    except Exception as e:
+                        logger.warning(f"Error parsing timestamp for {url_entry['url']}: {e}")
         
-        total_issues = len(issues['stuck_processing'])
+        # Check 2: Missing documents for completed URLs
+        completed_urls = [u for u in all_urls if u.get('status') == 'completed']
+        logger.info(f"Checking {len(completed_urls)} completed URLs for missing documents...")
+        
+        # Batch process in chunks of 100 to avoid timeout
+        batch_size = 100
+        for i in range(0, len(completed_urls), batch_size):
+            batch = completed_urls[i:i+batch_size]
+            logger.debug(f"Checking batch {i//batch_size + 1} of {(len(completed_urls)-1)//batch_size + 1}")
+            
+            for url_entry in batch:
+                try:
+                    # Check if documents exist for this URL
+                    doc_response = await (
+                        worker_instance.supabase
+                        .table('documents')
+                        .select('id')
+                        .eq('url', url_entry['url'])
+                        .limit(1)
+                        .execute()
+                    )
+                    
+                    if not doc_response.data or len(doc_response.data) == 0:
+                        issues['missing_documents'].append(url_entry['url'])
+                        logger.debug(f"Found missing documents for: {url_entry['url']}")
+                except Exception as e:
+                    logger.error(f"Error checking documents for {url_entry['url']}: {e}")
+        
+        # Check 3: Failed URLs (report only)
+        for url_entry in all_urls:
+            if url_entry.get('status') == 'failed':
+                issues['failed_urls'].append({
+                    'url': url_entry['url'],
+                    'error_message': url_entry.get('error_message', 'Unknown error'),
+                    'attempts': url_entry.get('attempts', 0),
+                })
+                logger.debug(f"Found failed URL: {url_entry['url']} - {url_entry.get('error_message')}")
+        
+        # Calculate totals
+        total_issues = (
+            len(issues['stuck_processing']) + 
+            len(issues['missing_documents']) + 
+            len(issues['failed_urls'])
+        )
         success_rate = ((total_urls - total_issues) / total_urls * 100) if total_urls > 0 else 100
         
         validation_report = {
@@ -316,7 +363,10 @@ async def validate_urls():
             'total_issues': total_issues,
             'issues': {
                 'stuck_processing': len(issues['stuck_processing']),
+                'missing_documents': len(issues['missing_documents']),
+                'failed_urls': len(issues['failed_urls']),
             },
+            'failed_urls': issues['failed_urls'][:50],  # Limit to first 50 for response size
         }
         
         return ValidationResponse(
@@ -368,14 +418,16 @@ async def fix_background_task(task_id: str):
         return
     
     try:
-        stuck_urls_fixed = 0
-        
-        # Fix stuck processing URLs (processing for more than 1 hour)
         from datetime import datetime, timedelta
-        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+        stuck_urls_fixed = 0
+        missing_docs_fixed = 0
         
+        # Fetch all URLs from url_queue
         response = await worker_instance.supabase.table('url_queue').select('*').execute()
         all_urls = response.data if response.data else []
+        
+        # Fix 1: Stuck processing URLs (processing for more than 3 minutes)
+        three_minutes_ago = datetime.utcnow() - timedelta(minutes=3)
         
         for url_entry in all_urls:
             if url_entry.get('status') == 'processing':
@@ -383,18 +435,59 @@ async def fix_background_task(task_id: str):
                 if updated_at:
                     try:
                         updated_time = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
-                        if updated_time < one_hour_ago:
-                            # Reset to pending
+                        if updated_time < three_minutes_ago:
+                            # Reset to pending, clear error, reset attempts to 0
                             await worker_instance.supabase.table('url_queue').update({
                                 'status': 'pending',
                                 'error_message': None,
+                                'attempts': 0,
                                 'updated_at': datetime.utcnow().isoformat(),
                             }).eq('id', url_entry['id']).execute()
                             stuck_urls_fixed += 1
-                    except:
-                        pass
+                            logger.info(f"Reset stuck URL: {url_entry['url']}")
+                    except Exception as e:
+                        logger.warning(f"Error processing stuck URL {url_entry['url']}: {e}")
         
-        logger.info(f"Fix task {task_id} completed: {stuck_urls_fixed} stuck URLs reset")
+        # Fix 2: Missing documents for completed URLs
+        completed_urls = [u for u in all_urls if u.get('status') == 'completed']
+        logger.info(f"Checking {len(completed_urls)} completed URLs for missing documents...")
+        
+        # Batch process in chunks of 100 to avoid timeout
+        batch_size = 100
+        for i in range(0, len(completed_urls), batch_size):
+            batch = completed_urls[i:i+batch_size]
+            logger.debug(f"Fixing batch {i//batch_size + 1} of {(len(completed_urls)-1)//batch_size + 1}")
+            
+            for url_entry in batch:
+                try:
+                    # Check if documents exist for this URL
+                    doc_response = await (
+                        worker_instance.supabase
+                        .table('documents')
+                        .select('id')
+                        .eq('url', url_entry['url'])
+                        .limit(1)
+                        .execute()
+                    )
+                    
+                    if not doc_response.data or len(doc_response.data) == 0:
+                        # No documents found, reset to pending
+                        await worker_instance.supabase.table('url_queue').update({
+                            'status': 'pending',
+                            'error_message': 'Missing documents detected',
+                            'attempts': 0,
+                            'updated_at': datetime.utcnow().isoformat(),
+                        }).eq('id', url_entry['id']).execute()
+                        missing_docs_fixed += 1
+                        logger.info(f"Reset missing-docs URL: {url_entry['url']}")
+                except Exception as e:
+                    logger.error(f"Error fixing missing documents for {url_entry['url']}: {e}")
+        
+        # Note: Failed URLs are NOT auto-fixed per user request
+        # User will manually trigger validate-fix if needed
+        
+        total_fixed = stuck_urls_fixed + missing_docs_fixed
+        logger.info(f"Fix task {task_id} completed: {stuck_urls_fixed} stuck, {missing_docs_fixed} missing-docs, total: {total_fixed}")
         
     except Exception as e:
         logger.error(f"Background fix error: {e}")
