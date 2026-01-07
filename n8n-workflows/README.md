@@ -115,7 +115,7 @@ Pre-configured n8n workflows for all RAG Scraper API endpoints.
 **Auto-Fixes**:
 - ✅ **Stuck processing URLs**: Reset to 'pending', clear errors, reset attempts
 - ✅ **Missing documents**: Completed URLs without docs reset to 'pending'
-- ❌ **Failed URLs**: NOT auto-fixed (requires manual review)
+- ✅ **Failed URLs**: Reset to 'pending' for retry (transient failures may succeed on retry)
 
 **Behavior**:
 - Runs in background (returns immediately)

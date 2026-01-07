@@ -544,8 +544,38 @@ async def fix_background_task(task_id: str):
             
             offset += batch_size
         
-        # Note: Failed URLs are NOT auto-fixed per user request
-        # User will manually trigger validate-fix if needed
+        # Fix 3: Auto-fix failed URLs (user requested)
+        offset = 0
+        while True:
+            # Fetch failed URLs batch
+            response = await (
+                worker_instance.supabase
+                .table('url_queue')
+                .select('*')
+                .eq('status', 'failed')
+                .range(offset, offset + batch_size - 1)
+                .execute()
+            )
+            
+            failed_batch = response.data if response.data else []
+            
+            # No more results? Stop
+            if not failed_batch:
+                break
+            
+            # Process batch for failed URLs
+            for url_entry in failed_batch:
+                # Reset to pending, clear error, reset attempts
+                await worker_instance.supabase.table('url_queue').update({
+                    'status': 'pending',
+                    'error_message': 'Auto-fixed by validate-fix',
+                    'attempts': 0,
+                    'updated_at': datetime.utcnow().isoformat(),
+                }).eq('id', url_entry['id']).execute()
+                stuck_urls_fixed += 1  # Track with same counter
+                logger.info(f"Auto-fixed failed URL: {url_entry['url']}")
+            
+            offset += batch_size
         
         total_fixed = stuck_urls_fixed + missing_docs_fixed
         logger.info(f"Fix task {task_id} completed: {stuck_urls_fixed} stuck, {missing_docs_fixed} missing-docs, total: {total_fixed}")
