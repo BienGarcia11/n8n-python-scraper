@@ -203,11 +203,31 @@ class RAGScraperWorker:
             # Batch insert documents
             response = await self.supabase.table('documents').insert(documents).execute()
             
-            logger.info(f"Stored {len(documents)} documents in Supabase")
-            return True
+            # CRITICAL FIX: Verify documents were actually inserted
+            # Supabase async client may not raise exceptions on silent failures
+            urls = [doc['url'] for doc in documents]
+            
+            # Check first 100 URLs (batch verification to avoid large queries)
+            check_urls = urls[:100]
+            verify_response = await (
+                self.supabase
+                .table('documents')
+                .select('url', 'id')
+                .in_('url', check_urls)
+                .execute()
+            )
+            
+            # If we found documents, insert was successful
+            if verify_response.data and len(verify_response.data) > 0:
+                logger.info(f"✅ Verified {len(documents)} documents stored in Supabase")
+                return True
+            else:
+                # Insert appeared to succeed but no documents found - this is the bug!
+                logger.error(f"❌ CRITICAL: Insert appeared to succeed but {len(documents)} documents NOT found in database!")
+                return False
             
         except Exception as e:
-            logger.error(f"Error storing documents: {e}")
+            logger.error(f"❌ Failed to store documents: {e}")
             return False
     
     async def process_url(self, url_entry: Dict[str, Any]):
