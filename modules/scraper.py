@@ -20,7 +20,7 @@ class PlaywrightScraper:
         headless: bool = True,
         timeout: int = 30000,
         user_agents: Optional[list] = None,
-    ):
+    ) -> None:
         """
         Initialize Playwright scraper.
         
@@ -32,7 +32,7 @@ class PlaywrightScraper:
         self.headless = headless
         self.timeout = timeout
         self.user_agents = user_agents or [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0 Safari/537.36",
         ]
         self.playwright = None
         self.browser: Optional[Browser] = None
@@ -45,7 +45,7 @@ class PlaywrightScraper:
             # Construct executable path
             self.executable_path = os.path.join(
                 browsers_path,
-                'chromium-1200',
+                'ms-playwright-1200',
                 'chrome-linux',
                 'chrome'
             )
@@ -159,7 +159,6 @@ class PlaywrightScraper:
             permissions=['geolocation'],
             geolocation={'latitude': 40.7128, 'longitude': -74.0060},
             color_scheme='light',
-            reduced_motion='no-motion',
         )
         
         # Set additional headers
