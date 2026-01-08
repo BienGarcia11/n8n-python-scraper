@@ -517,6 +517,9 @@ async def fix_background_task(task_id: str):
             urls_to_check = [u['url'] for u in completed_batch]
             batch_size = 100  # Safe limit for .in_()
             
+            # FIX: Initialize outside loop to accumulate all URLs with documents
+            all_urls_with_docs = set()
+            
             for i in range(0, len(urls_to_check), batch_size):
                 chunk = urls_to_check[i:i+batch_size]
                 doc_response = await (
@@ -527,8 +530,8 @@ async def fix_background_task(task_id: str):
                     .execute()
                 )
                 
-                # Check for missing documents
-                all_urls_with_docs = set(d['url'] for d in doc_response.data)
+                # Accumulate URLs with documents across all batches
+                all_urls_with_docs.update(d['url'] for d in doc_response.data)
             
             for url_entry in completed_batch:
                 if url_entry['url'] not in all_urls_with_docs:
@@ -572,7 +575,7 @@ async def fix_background_task(task_id: str):
                     'attempts': 0,
                     'updated_at': datetime.utcnow().isoformat(),
                 }).eq('id', url_entry['id']).execute()
-                stuck_urls_fixed += 1  # Track with same counter
+                missing_docs_fixed += 1  # FIX: Use correct counter
                 logger.info(f"Auto-fixed failed URL: {url_entry['url']}")
             
             offset += batch_size
