@@ -2,9 +2,11 @@
 Content extraction module using Trafilatura.
 Extracts clean text from HTML, removing navbars, ads, and other clutter.
 """
+import json
 import logging
 from typing import Optional, Dict, Any
 import trafilatura
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
@@ -59,11 +61,10 @@ class ContentExtractor:
                     "url": url,
                 }
             
-            # Parse the JSON output
-            import json
+            # Parse JSON output
             data = json.loads(extracted)
             
-            # Clean up the content
+            # Clean up content
             content = data.get("text", "")
             title = data.get("title", "")
             author = data.get("author", "")
@@ -98,7 +99,6 @@ class ContentExtractor:
                 }
             # Fallback: return raw text
             try:
-                from bs4 import BeautifulSoup
                 soup = BeautifulSoup(html, "html.parser")
                 # Remove script and style elements
                 for script in soup(["script", "style"]):
@@ -146,4 +146,4 @@ class ContentExtractor:
         if len(content.strip()) == 0:
             return False
         
-        return True
+        return True        

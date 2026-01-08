@@ -126,6 +126,32 @@ async def scraping_status():
             'percentage': 0.0,
         })
         
+        # Clear completed tasks that are more than 30 seconds old
+        # This prevents "completed" status from persisting indefinitely
+        current_status = bulk_task.get('status', 'idle')
+        if current_status == 'completed':
+            stopped_at = bulk_task.get('stopped_at')
+            if stopped_at:
+                try:
+                    stopped_time = datetime.fromisoformat(stopped_at.replace('Z', '+00:00'))
+                    time_since_completion = (datetime.utcnow() - stopped_time).total_seconds()
+                    if time_since_completion > 30:
+                        # Task completed more than 30 seconds ago, clear it
+                        worker_instance.bulk_task = {
+                            'task_id': None,
+                            'status': 'idle',
+                            'task_type': 'idle',
+                            'total_urls': 0,
+                            'processed_urls': 0,
+                            'failed_urls': 0,
+                            'fixed_urls': 0,
+                            'percentage': 0.0,
+                        }
+                        current_status = 'idle'
+                        logger.info("Cleared completed task state, status is now idle")
+                except Exception as e:
+                    logger.warning(f"Error parsing stopped_at time: {e}")
+        
         # Calculate percentage
         if bulk_task['total_urls'] > 0:
             percentage = (bulk_task['processed_urls'] / bulk_task['total_urls']) * 100
@@ -133,7 +159,7 @@ async def scraping_status():
         
         return StatusResponse(
             task_id=bulk_task.get('task_id'),
-            status=bulk_task.get('status', 'idle'),
+            status=current_status,
             task_type=bulk_task.get('task_type', 'idle'),
             total_urls=bulk_task.get('total_urls', 0),
             processed_urls=bulk_task.get('processed_urls', 0),
