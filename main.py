@@ -305,6 +305,15 @@ class RAGScraperWorker:
                         'chunk_index': chunk_index,
                         'total_chunks': total_chunks,
                         'embedding': embeddings[i],
+                        'metadata': {
+                            'title': extract_result['title'],
+                            'url': scrape_result['url'],
+                            'chunk_index': chunk_index,
+                            'total_chunks': total_chunks,
+                            'final_url': scrape_result.get('final_url', scrape_result['url']),
+                            'status_code': scrape_result.get('status_code'),
+                            'content_length': len(chunk_text),
+                        }
                     }
                     documents.append(doc)
                 
