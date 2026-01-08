@@ -5,7 +5,7 @@ Provides control interface for n8n workflows.
 import logging
 import uuid
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
@@ -38,9 +38,11 @@ class StatusResponse(BaseModel):
     """Response model for bulk scrape status."""
     task_id: Optional[str]
     status: str
+    task_type: Optional[str] = "idle"
     total_urls: int
     processed_urls: int
     failed_urls: int
+    fixed_urls: Optional[int] = 0
     percentage: float
 
 
@@ -116,9 +118,11 @@ async def scraping_status():
         bulk_task = getattr(worker_instance, 'bulk_task', {
             'task_id': None,
             'status': 'idle',
+            'task_type': 'idle',
             'total_urls': 0,
             'processed_urls': 0,
             'failed_urls': 0,
+            'fixed_urls': 0,
             'percentage': 0.0,
         })
         
@@ -127,7 +131,16 @@ async def scraping_status():
             percentage = (bulk_task['processed_urls'] / bulk_task['total_urls']) * 100
             bulk_task['percentage'] = round(percentage, 2)
         
-        return StatusResponse(**bulk_task)
+        return StatusResponse(
+            task_id=bulk_task.get('task_id'),
+            status=bulk_task.get('status', 'idle'),
+            task_type=bulk_task.get('task_type', 'idle'),
+            total_urls=bulk_task.get('total_urls', 0),
+            processed_urls=bulk_task.get('processed_urls', 0),
+            failed_urls=bulk_task.get('failed_urls', 0),
+            fixed_urls=bulk_task.get('fixed_urls', 0),
+            percentage=bulk_task.get('percentage', 0.0),
+        )
         
     except Exception as e:
         logger.error(f"Status check error: {e}")
@@ -161,10 +174,12 @@ async def start_bulk_scrape(background_tasks: BackgroundTasks):
         # Initialize bulk task state
         worker_instance.bulk_task = {
             'task_id': task_id,
+            'task_type': 'scraping',
             'status': 'running',
             'total_urls': len(urls),
             'processed_urls': 0,
             'failed_urls': 0,
+            'fixed_urls': 0,
             'percentage': 0.0,
             'started_at': datetime.utcnow().isoformat(),
         }
@@ -233,26 +248,27 @@ async def process_bulk_background():
 @app.post("/stop_scraping_work", response_model=StopResponse)
 async def stop_scraping_work():
     """
-    Stop bulk scrape work gracefully.
-    Stops after current URL finishes, returns count processed.
+    Stop bulk scrape or validation-fix work gracefully.
+    Stops after current operation finishes, returns count processed.
     """
     if not worker_instance:
         raise HTTPException(status_code=503, detail="Worker not initialized")
     
     try:
         bulk_task = getattr(worker_instance, 'bulk_task', {})
+        task_type = bulk_task.get('task_type')
         
         if bulk_task.get('status') != 'running':
             raise HTTPException(
                 status_code=400,
-                detail="No bulk scrape currently running",
+                detail=f"No task currently running",
             )
         
-        # Set stop flag
+        # Set stop flag for any running task
         bulk_task['stop_requested'] = True
-        urls_processed = bulk_task['processed_urls']
+        urls_processed = bulk_task.get('processed_urls', 0)
         
-        # Give time for current URL to finish (max 30 seconds)
+        # Give time for current operation to finish (max 30 seconds)
         max_wait = 30
         waited = 0
         
@@ -260,10 +276,12 @@ async def stop_scraping_work():
             await asyncio.sleep(1)
             waited += 1
         
+        task_name = "scraping" if task_type == 'scraping' else "fixing"
+        
         return StopResponse(
             status="stopping",
             urls_processed=urls_processed,
-            message=f"Stopping after {urls_processed} URLs processed",
+            message=f"Stopping {task_name} task after {urls_processed} items processed",
         )
         
     except HTTPException:
@@ -275,8 +293,6 @@ async def stop_scraping_work():
 
 async def _process_url_batch(url_batch, issues, all_urls_with_docs):
     """Process a batch of URLs for validation with batch document lookups."""
-    from datetime import datetime, timedelta
-    
     # Extract completed URLs for this batch
     completed_urls = [u for u in url_batch if u.get('status') == 'completed']
     
@@ -452,12 +468,32 @@ async def fix_background_task(task_id: str):
         missing_docs_fixed = 0
         failed_urls_fixed = 0  # FIX: Initialize outside while loop
         
+        # Initialize bulk_task with fix task info
+        total_urls = await worker_instance.fetch_pending_urls(limit=10000)
+        worker_instance.bulk_task = {
+            'task_id': task_id,
+            'task_type': 'fixing',
+            'status': 'running',
+            'total_urls': total_urls,
+            'processed_urls': 0,
+            'failed_urls': 0,
+            'fixed_urls': 0,
+            'percentage': 0.0,
+            'started_at': datetime.utcnow().isoformat(),
+        }
+        
         # Optimization: Pagination for fetching URLs
         batch_size = 1000
         offset = 0
         three_minutes_ago = datetime.utcnow() - timedelta(minutes=3)
+        urls_checked = 0  # Track URLs checked so far
         
         while True:
+            # Check for stop signal
+            if worker_instance.bulk_task.get('stop_requested'):
+                logger.info("Stop requested, breaking fix loop")
+                break
+            
             # Fetch URL batch
             response = await (
                 worker_instance.supabase
@@ -475,6 +511,7 @@ async def fix_background_task(task_id: str):
             
             # Process batch for stuck URLs
             for url_entry in url_batch:
+                urls_checked += 1  # Track URLs checked
                 if url_entry.get('status') == 'processing':
                     updated_at = url_entry.get('updated_at')
                     if updated_at:
@@ -492,6 +529,12 @@ async def fix_background_task(task_id: str):
                                 logger.info(f"Reset stuck URL: {url_entry['url']}")
                         except Exception as e:
                             logger.warning(f"Error processing stuck URL {url_entry['url']}: {e}")
+            
+            # Update progress after stuck URL batch
+            worker_instance.bulk_task['processed_urls'] = urls_checked
+            worker_instance.bulk_task['fixed_urls'] = stuck_urls_fixed
+            if worker_instance.bulk_task['total_urls'] > 0:
+                worker_instance.bulk_task['percentage'] = round((urls_checked / worker_instance.bulk_task['total_urls']) * 100, 2)
             
             offset += batch_size
         
@@ -533,6 +576,7 @@ async def fix_background_task(task_id: str):
                 all_urls_with_docs.update(d['url'] for d in doc_response.data)
             
             for url_entry in completed_batch:
+                urls_checked += 1  # Track URLs checked
                 if url_entry['url'] not in all_urls_with_docs:
                     # No documents found, reset to pending
                     await worker_instance.supabase.table('url_queue').update({
@@ -543,6 +587,12 @@ async def fix_background_task(task_id: str):
                     }).eq('id', url_entry['id']).execute()
                     missing_docs_fixed += 1
                     logger.info(f"Reset missing-docs URL: {url_entry['url']}")
+            
+            # Update progress after missing-docs batch
+            worker_instance.bulk_task['processed_urls'] = urls_checked
+            worker_instance.bulk_task['fixed_urls'] = stuck_urls_fixed + missing_docs_fixed
+            if worker_instance.bulk_task['total_urls'] > 0:
+                worker_instance.bulk_task['percentage'] = round((urls_checked / worker_instance.bulk_task['total_urls']) * 100, 2)
             
             offset += batch_size
         
@@ -567,6 +617,7 @@ async def fix_background_task(task_id: str):
             
             # Process batch for failed URLs
             for url_entry in failed_batch:
+                urls_checked += 1  # Track URLs checked
                 # Reset to pending, clear error, reset attempts
                 await worker_instance.supabase.table('url_queue').update({
                     'status': 'pending',
@@ -577,13 +628,25 @@ async def fix_background_task(task_id: str):
                 failed_urls_fixed += 1
                 logger.info(f"Auto-fixed failed URL: {url_entry['url']}")
             
+            # Update progress after failed-URLs batch
+            worker_instance.bulk_task['processed_urls'] = urls_checked
+            worker_instance.bulk_task['fixed_urls'] = stuck_urls_fixed + missing_docs_fixed + failed_urls_fixed
+            if worker_instance.bulk_task['total_urls'] > 0:
+                worker_instance.bulk_task['percentage'] = round((urls_checked / worker_instance.bulk_task['total_urls']) * 100, 2)
+            
             offset += batch_size
         
+        # Mark task as completed
+        worker_instance.bulk_task['status'] = 'completed'
+        worker_instance.bulk_task['stopped_at'] = datetime.utcnow().isoformat()
         total_fixed = stuck_urls_fixed + missing_docs_fixed + failed_urls_fixed
         logger.info(f"Fix task {task_id} completed: {stuck_urls_fixed} stuck, {missing_docs_fixed} missing-docs, {failed_urls_fixed} failed, total: {total_fixed}")
         
     except Exception as e:
         logger.error(f"Background fix error: {e}")
+        # Mark task as error
+        worker_instance.bulk_task['status'] = 'error'
+        worker_instance.bulk_task['stopped_at'] = datetime.utcnow().isoformat()
 
 
 # Create app instance for uvicorn
