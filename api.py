@@ -266,10 +266,11 @@ async def stop_scraping_work():
         
         # Set stop flag for any running task
         bulk_task['stop_requested'] = True
+        bulk_task['status'] = 'stopping'  # Update status to stopping
         urls_processed = bulk_task.get('processed_urls', 0)
         
-        # Give time for current operation to finish (max 30 seconds)
-        max_wait = 30
+        # Give time for current operation to finish (max 60 seconds)
+        max_wait = 60
         waited = 0
         
         while bulk_task.get('status') == 'running' and waited < max_wait:
@@ -543,6 +544,11 @@ async def fix_background_task(task_id: str):
         offset = 0
         all_urls_with_docs = set()  # FIX: Initialize before use
         while True:
+            # Check for stop signal
+            if worker_instance.bulk_task.get('stop_requested'):
+                logger.info("Stop requested, breaking missing-docs loop")
+                break
+            
             # Fetch completed URLs batch
             response = await (
                 worker_instance.supabase
@@ -564,6 +570,10 @@ async def fix_background_task(task_id: str):
             batch_size = 100  # Safe limit for .in_()
             
             for i in range(0, len(urls_to_check), batch_size):
+                # Check for stop signal before each doc lookup batch
+                if worker_instance.bulk_task.get('stop_requested'):
+                    logger.info("Stop requested, breaking missing-docs doc lookup loop")
+                    break
                 chunk = urls_to_check[i:i+batch_size]
                 doc_response = await (
                     worker_instance.supabase
@@ -576,7 +586,15 @@ async def fix_background_task(task_id: str):
                 # Accumulate URLs with documents across all batches
                 all_urls_with_docs.update(d['url'] for d in doc_response.data)
             
+            # Break if stop was requested during doc lookups
+            if worker_instance.bulk_task.get('stop_requested'):
+                break
+            
             for url_entry in completed_batch:
+                # Check for stop signal before each fix
+                if worker_instance.bulk_task.get('stop_requested'):
+                    logger.info("Stop requested, breaking missing-docs fix loop")
+                    break
                 urls_checked += 1  # Track URLs checked
                 if url_entry['url'] not in all_urls_with_docs:
                     # No documents found, reset to pending
@@ -589,6 +607,10 @@ async def fix_background_task(task_id: str):
                     missing_docs_fixed += 1
                     logger.info(f"Reset missing-docs URL: {url_entry['url']}")
             
+            # Break outer loop if stop was requested mid-batch
+            if worker_instance.bulk_task.get('stop_requested'):
+                break
+            
             # Update progress after missing-docs batch
             worker_instance.bulk_task['processed_urls'] = urls_checked
             worker_instance.bulk_task['fixed_urls'] = stuck_urls_fixed + missing_docs_fixed
@@ -600,6 +622,11 @@ async def fix_background_task(task_id: str):
         # Fix 3: Auto-fix failed URLs (user requested)
         offset = 0
         while True:
+            # Check for stop signal
+            if worker_instance.bulk_task.get('stop_requested'):
+                logger.info("Stop requested, breaking failed-URLs loop")
+                break
+            
             # Fetch failed URLs batch
             response = await (
                 worker_instance.supabase
@@ -618,6 +645,11 @@ async def fix_background_task(task_id: str):
             
             # Process batch for failed URLs
             for url_entry in failed_batch:
+                # Check for stop signal before processing each URL
+                if worker_instance.bulk_task.get('stop_requested'):
+                    logger.info("Stop requested, breaking failed-URLs loop mid-batch")
+                    break
+                
                 urls_checked += 1  # Track URLs checked
                 # Reset to pending, clear error, reset attempts
                 await worker_instance.supabase.table('url_queue').update({
@@ -628,6 +660,10 @@ async def fix_background_task(task_id: str):
                 }).eq('id', url_entry['id']).execute()
                 failed_urls_fixed += 1
                 logger.info(f"Auto-fixed failed URL: {url_entry['url']}")
+            
+            # Break outer loop if stop was requested mid-batch
+            if worker_instance.bulk_task.get('stop_requested'):
+                break
             
             # Update progress after failed-URLs batch
             worker_instance.bulk_task['processed_urls'] = urls_checked
