@@ -453,10 +453,14 @@ async def main():
 if __name__ == "__main__":
     # Start FastAPI server if running directly (for Railway)
     import uvicorn
-    logger.info("Starting HTTP API server on port 8000...")
+    import os
+    
+    # Use PORT from environment if available (Railway sets this), otherwise default to 8000
+    port = int(os.getenv("PORT", 8000))
+    logger.info(f"Starting HTTP API server on port {port}...")
     uvicorn.run(
         "main:app_instance",
         host="0.0.0.0",
-        port=8000,
+        port=port,
         log_level="info",
     )
