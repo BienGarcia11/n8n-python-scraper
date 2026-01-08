@@ -469,7 +469,8 @@ async def fix_background_task(task_id: str):
         failed_urls_fixed = 0  # FIX: Initialize outside while loop
         
         # Initialize bulk_task with fix task info
-        total_urls = await worker_instance.fetch_pending_urls(limit=10000)
+        urls_list = await worker_instance.fetch_pending_urls(limit=10000)
+        total_urls = len(urls_list)
         worker_instance.bulk_task = {
             'task_id': task_id,
             'task_type': 'fixing',
