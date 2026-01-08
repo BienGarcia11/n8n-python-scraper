@@ -450,6 +450,7 @@ async def fix_background_task(task_id: str):
         from datetime import datetime, timedelta
         stuck_urls_fixed = 0
         missing_docs_fixed = 0
+        failed_urls_fixed = 0  # FIX: Initialize outside while loop
         
         # Optimization: Pagination for fetching URLs
         batch_size = 1000
@@ -496,6 +497,7 @@ async def fix_background_task(task_id: str):
         
         # Fetch all completed URLs for missing documents check
         offset = 0
+        all_urls_with_docs = set()  # FIX: Initialize before use
         while True:
             # Fetch completed URLs batch
             response = await (
@@ -516,9 +518,6 @@ async def fix_background_task(task_id: str):
             # Optimization: Batch document lookup with chunking
             urls_to_check = [u['url'] for u in completed_batch]
             batch_size = 100  # Safe limit for .in_()
-            
-            # FIX: Initialize outside loop to accumulate all URLs with documents
-            all_urls_with_docs = set()
             
             for i in range(0, len(urls_to_check), batch_size):
                 chunk = urls_to_check[i:i+batch_size]
@@ -575,13 +574,13 @@ async def fix_background_task(task_id: str):
                     'attempts': 0,
                     'updated_at': datetime.utcnow().isoformat(),
                 }).eq('id', url_entry['id']).execute()
-                missing_docs_fixed += 1  # FIX: Use correct counter
+                failed_urls_fixed += 1
                 logger.info(f"Auto-fixed failed URL: {url_entry['url']}")
             
             offset += batch_size
         
-        total_fixed = stuck_urls_fixed + missing_docs_fixed
-        logger.info(f"Fix task {task_id} completed: {stuck_urls_fixed} stuck, {missing_docs_fixed} missing-docs, total: {total_fixed}")
+        total_fixed = stuck_urls_fixed + missing_docs_fixed + failed_urls_fixed
+        logger.info(f"Fix task {task_id} completed: {stuck_urls_fixed} stuck, {missing_docs_fixed} missing-docs, {failed_urls_fixed} failed, total: {total_fixed}")
         
     except Exception as e:
         logger.error(f"Background fix error: {e}")
