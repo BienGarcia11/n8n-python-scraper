@@ -496,8 +496,9 @@ async def fix_background_task(task_id: str):
         failed_urls_fixed = 0  # FIX: Initialize outside while loop
         
         # Initialize bulk_task with fix task info
-        urls_list = await worker_instance.fetch_pending_urls(limit=10000)
-        total_urls = len(urls_list)
+        # FIX: Get total URLs count (not just pending) for correct percentage
+        count_response = await worker_instance.supabase.table('url_queue').select('*', count='exact').execute()
+        total_urls = count_response.count if hasattr(count_response, 'count') else 0
         worker_instance.bulk_task = {
             'task_id': task_id,
             'task_type': 'fixing',
