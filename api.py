@@ -561,7 +561,7 @@ async def fix_background_task(task_id: str):
             
             # Update progress after stuck URL batch
             worker_instance.bulk_task['processed_urls'] = urls_checked
-            worker_instance.bulk_task['fixed_urls'] = stuck_urls_fixed
+            worker_instance.bulk_task['fixed_urls'] = stuck_urls_fixed + missing_docs_fixed
             if worker_instance.bulk_task['total_urls'] > 0:
                 worker_instance.bulk_task['percentage'] = round((urls_checked / worker_instance.bulk_task['total_urls']) * 100, 2)
             
