@@ -1,0 +1,11 @@
+playwright
+beautifulsoup4
+lxml
+openai
+tiktoken
+python-dotenv
+numpy
+httpx
+fastapi
+uvicorn[standard]
+supabase
