@@ -34,11 +34,10 @@ def setup_logger(name: str = "app", level: str = None) -> logging.Logger:
     if logger.handlers:
         return logger
     
-    # Create JSON formatter for Railway logs
+    # Create JSON formatter for Railway logs (extra fields are automatically handled)
     formatter = jsonlogger.JsonFormatter(
         fmt='%(asctime)s %(name)s %(levelname)s %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
-        extra={}
+        datefmt='%Y-%m-%d %H:%M:%S'
     )
     
     # Console handler (for Railway)
