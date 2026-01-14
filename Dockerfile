@@ -30,28 +30,28 @@ RUN apt-get update && apt-get install -y \
     libdbus-1-3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user first (so Playwright installs to their home directory)
+# Create non-root user
 RUN useradd -m appuser
 
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install Python dependencies as appuser
-USER appuser
-RUN pip install --no-cache-dir --user -r requirements.txt
+# Install Python dependencies as ROOT (so playwright command is available)
+USER root
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browsers as appuser (this puts them in /home/appuser/.cache/ms-playwright/)
+# Install Playwright browsers as ROOT
 RUN playwright install --with-deps chromium
 
-# Copy application code (as root for proper ownership)
-USER root
+# Copy application code and set ownership
 COPY . .
 RUN chown -R appuser:appuser /app
+RUN chown -R appuser:appuser /home/appuser
 
-# Switch back to appuser for running
+# Switch to appuser for running
 USER appuser
 
-# Set Playwright to use the browser cache path
+# Set Playwright browser path
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/appuser/.cache/ms-playwright
 
 # Expose port
