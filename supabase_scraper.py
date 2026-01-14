@@ -441,9 +441,106 @@ async def health_check():
         )
 
 
-@app.post("/scrape")
+@app.get("/scrape")
 async def scrape_endpoint(request: ScrapeRequest = None) -> ScrapeResponse:
-    """Main endpoint to start scraping all pending URLs from queue"""
+    """Main endpoint to start scraping all pending URLs from queue (supports GET for Railway)"""
+@app.post("/scrape")
+async def scrape_endpoint_post(request: ScrapeRequest = None) -> ScrapeResponse:
+    """Main endpoint to start scraping all pending URLs from queue (POST method for Railway workflow)"""
+    try:
+        # Use provided batch_size or default
+        batch_size = request.batch_size if request else BATCH_SIZE
+        
+        # Process all URLs
+        result = await process_all_urls(batch_size)
+        
+        return ScrapeResponse(
+            success=True,
+            message="Scraping completed successfully",
+            **result
+        )
+    
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "message": f"Error during scraping: {str(e)}",
+                "total_processed": 0,
+                "successful": 0,
+                "failed": 0,
+                "total_chunks_inserted": 0,
+                "total_chunks_deleted": 0,
+                "processing_time": "0s",
+                "refreshed_urls": 0,
+                "new_urls": 0,
+                "details": []
+            }
+        )
+
+
+@app.get("/scrape-batch")
+async def scrape_batch_endpoint_get(request: ScrapeRequest = None) -> ScrapeResponse:
+    """Process a single batch of URLs (GET method for Railway triggers)"""
+    try:
+        # Process one batch only
+        batch_result = await process_batch(request.batch_size)
+        
+        return ScrapeResponse(
+            success=True,
+            message="Batch processed successfully",
+            **batch_result
+        )
+    
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "message": f"Error during batch processing: {str(e)}",
+                "total_processed": 0,
+                "successful": 0,
+                "failed": 0,
+                "total_chunks_inserted": 0,
+                "total_chunks_deleted": 0,
+                "processing_time": "0s",
+                "refreshed_urls": 0,
+                "new_urls": 0,
+                "details": []
+            }
+        )
+
+
+@app.post("/scrape-batch")
+async def scrape_batch_endpoint(request: ScrapeRequest) -> ScrapeResponse:
+    """Process a single batch of URLs (POST method for Railway workflow)"""
+    try:
+        # Process one batch only
+        batch_result = await process_batch(request.batch_size)
+        
+        return ScrapeResponse(
+            success=True,
+            message="Batch processed successfully",
+            **batch_result
+        )
+    
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "message": f"Error during batch processing: {str(e)}",
+                "total_processed": 0,
+                "successful": 0,
+                "failed": 0,
+                "total_chunks_inserted": 0,
+                "total_chunks_deleted": 0,
+                "processing_time": "0s",
+                "refreshed_urls": 0,
+                "new_urls": 0,
+                "details": []
+            }
+        )
     try:
         # Use provided batch_size or default
         batch_size = request.batch_size if request else BATCH_SIZE
