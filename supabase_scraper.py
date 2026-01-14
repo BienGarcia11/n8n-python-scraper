@@ -37,21 +37,49 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 PORT = int(os.getenv("PORT", "8000"))
 
-# Initialize Supabase client
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("SUPABASE_URL and SUPABASE_KEY environment variables are required")
+# Global variables for lazy initialization (set after app loads)
+supabase = None
+embedder = None
 
-# Create Supabase client with error handling for proxy parameter issue
-try:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-except TypeError as e:
-    # Fallback: try initializing without options to avoid proxy parameter issue
-    print(f"Warning: Using fallback Supabase initialization due to: {e}")
-    from supabase import Client as SupabaseClient
-    supabase = SupabaseClient(SUPABASE_URL, SUPABASE_KEY)
+# Initialize components (with graceful degradation if env vars missing)
+def initialize_components():
+    """Initialize Supabase and OpenAI clients with graceful degradation"""
+    global supabase, embedder
+    
+    # Initialize Supabase client
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print("WARNING: SUPABASE_URL or SUPABASE_KEY not set - Supabase features disabled")
+        supabase = None
+    else:
+        try:
+            from supabase import create_client, Client
+            try:
+                supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+            except TypeError as e:
+                # Fallback: try initializing without options to avoid proxy parameter issue
+                print(f"Warning: Using fallback Supabase initialization due to: {e}")
+                from supabase import Client as SupabaseClient
+                supabase = SupabaseClient(SUPABASE_URL, SUPABASE_KEY)
+            print("✓ Supabase client initialized")
+        except Exception as e:
+            print(f"ERROR: Failed to initialize Supabase client: {e}")
+            supabase = None
+    
+    # Initialize embedding generator
+    if not OPENAI_API_KEY:
+        print("WARNING: OPENAI_API_KEY not set - embedding generation disabled")
+        embedder = None
+    else:
+        try:
+            from embedding_generator import EmbeddingGenerator
+            embedder = EmbeddingGenerator(api_key=OPENAI_API_KEY)
+            print("✓ Embedding generator initialized")
+        except Exception as e:
+            print(f"ERROR: Failed to initialize embedding generator: {e}")
+            embedder = None
 
-# Initialize embedding generator
-embedder = EmbeddingGenerator(api_key=OPENAI_API_KEY)
+# Initialize components after app loads
+initialize_components()
 
 # Batch size for parallel processing
 BATCH_SIZE = 3
