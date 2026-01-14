@@ -37,7 +37,7 @@ class VersatileScraper:
         # Default configuration - can be overridden
         default_config = {
             'name': 'default',
-            'title_selectors': ['h1', 'title', '.article-title', '[itemprop="headline"]', 
+            'title_selectors': ['h1', 'title', '.article-title', '[itemprop="headline"]',
                             '[data-test-id="article-title"]'],
             'content_selectors': ['article', 'main', '.content', '#content', '[role="main"]',
                             '[data-test-id="article-content"]', '.article-content'],
@@ -67,10 +67,13 @@ class VersatileScraper:
     
     async def fetch_page(self):
         """Fetch webpage using Playwright"""
-        logger.info(f"Fetching: {self.url}", extra={"url": self.url})
+        logger.info("Fetching: " + self.url, extra={"url": self.url})
         
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(
+                headless=True,
+                args=['--no-sandbox', '--disable-setuid-sandbox']
+            )
             context = await browser.new_context(
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 viewport={'width': 1920, 'height': 1080}
@@ -80,7 +83,7 @@ class VersatileScraper:
             try:
                 # Navigate to page with different wait strategies
                 wait_until = self.config.get('wait_strategy', 'domcontentloaded')
-                await page.goto(self.url, wait_until=wait_until, 
+                await page.goto(self.url, wait_until=wait_until,
                           timeout=self.config['wait_timeout'])
                 
                 # Wait for content to load
@@ -93,10 +96,10 @@ class VersatileScraper:
                 self.raw_html = re.sub(r'<script[^>]*>.*?</script>', '', self.raw_html, flags=re.DOTALL)
                 self.raw_html = re.sub(r'<style[^>]*>.*?</style>', '', self.raw_html, flags=re.DOTALL)
                 
-                logger.info(f"Page fetched successfully", extra={"url": self.url, "html_length": len(self.raw_html)})
+                logger.info("Page fetched successfully", extra={"url": self.url, "html_length": len(self.raw_html)})
                 
             except Exception as e:
-                logger.error(f"Error fetching page: {e}", extra={"url": self.url})
+                logger.error("Error fetching page: " + str(e), extra={"url": self.url})
                 raise
             finally:
                 await browser.close()
@@ -128,7 +131,7 @@ class VersatileScraper:
             metadata['keywords'] = meta_keywords.get('content', '')
         
         # Extract author if available
-        author_selectors = ['[rel="author"]', '.author', '[itemprop="author"]', 
+        author_selectors = ['[rel="author"]', '.author', '[itemprop="author"]',
                           '.byline', '[class*="author"]', '[data-test-id="article-author"]']
         for selector in author_selectors:
             author = self.soup.select_one(selector)
@@ -137,7 +140,7 @@ class VersatileScraper:
                 break
         
         # Extract publication date if available
-        date_selectors = ['time[datetime]', '[datetime]', '.date', '.published', 
+        date_selectors = ['time[datetime]', '[datetime]', '.date', '.published',
                         '[itemprop="datePublished"]', '[itemprop="dateModified"]',
                         '[class*="date"]', '[data-test-id="article-date"]']
         for selector in date_selectors:
@@ -300,12 +303,12 @@ class VersatileScraper:
                 # Unordered list
                 for item in lst['items']:
                     if len(item) > 5:  # Skip very short items
-                        parts.append(f"• {item}")
+                        parts.append("• " + item)
             else:
                 # Ordered list
                 for i, item in enumerate(lst['items'], 1):
                     if len(item) > 5:  # Skip very short items
-                        parts.append(f"{i}. {item}")
+                        parts.append(str(i) + ". " + item)
             
             parts.append('')  # Empty line after lists
         
@@ -366,7 +369,7 @@ class VersatileScraper:
     
     async def scrape(self) -> Dict:
         """Main scraping method"""
-        logger.info(f"Starting scrape for: {self.url}", extra={"url": self.url, "config": self.config['name']})
+        logger.info("Starting scrape for: " + self.url, extra={"url": self.url, "config": self.config['name']})
         
         # Fetch page
         await self.fetch_page()
@@ -379,15 +382,15 @@ class VersatileScraper:
         self.data['content'] = self.extract_content()
         self.data['full_text'] = self.extract_full_text()
         
-        logger.info(f"Data extracted successfully", extra={"url": self.url, "title": self.data.get('metadata', {}).get('title', 'N/A')})
+        logger.info("Data extracted successfully", extra={"url": self.url, "title": self.data.get('metadata', {}).get('title', 'N/A')})
         return self.data
     
     def save_to_json(self, filename: str):
         """Save scraped data to JSON file"""
-        logger.info(f"Saving scraped data to {filename}", extra={"filename": filename, "url": self.url})
+        logger.info("Saving scraped data to " + filename, extra={"filename": filename, "url": self.url})
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(self.data, f, indent=2, ensure_ascii=False)
-        logger.info(f"Data saved successfully", extra={"filename": filename})
+        logger.info("Data saved successfully", extra={"filename": filename})
 
 
 # Preset configurations for common website types
@@ -425,7 +428,7 @@ WEBSITE_PRESETS = {
     'ecommerce': {
         'name': 'ecommerce',
         'title_selectors': ['h1', '[class*="product-title"]', '[itemprop="name"]'],
-        'content_selectors': ['[class*="product-description"]', '[itemprop="description"]', 
+        'content_selectors': ['[class*="product-description"]', '[itemprop="description"]',
                             '[class*="details"]'],
         'remove_selectors': ['script', 'style', 'nav', 'footer', 'aside', '[class*="cart"]',
                           '[class*="related-products"]', '[class*="reviews"]'],
@@ -472,7 +475,7 @@ async def main():
     # Create scraper instance
     scraper = VersatileScraper(url, config)
     
-    # Scrape the page
+    # Scrape page
     data = await scraper.scrape()
     
     # Save to JSON file
@@ -502,7 +505,7 @@ async def main():
         generator.process(input_file=output_file, chunk_size=800, overlap=100)
         logger.info("Embeddings generated successfully")
     except Exception as e:
-        logger.warning(f"Could not generate embeddings: {e}", extra={"error": str(e)})
+        logger.warning("Could not generate embeddings: " + str(e), extra={"error": str(e)})
         logger.warning("Make sure OPENAI_API_KEY is set in .env file")
 
 

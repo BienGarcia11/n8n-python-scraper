@@ -27,33 +27,27 @@ RUN apt-get update && apt-get install -y \
     libxshmfence1 \
     libxext6 \
     libxinerama1 \
-    libdbus-1.3 \
-    wget \
+    libdbus-1-3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user first
+# Create non-root user FIRST (before installing anything)
 RUN useradd -m appuser
 
 # Copy requirements
 COPY requirements.txt .
 
-# Install Python dependencies as root (to ensure playwright command is available globally)
+# Install Playwright browser AS appuser (so it installs to /home/appuser/.cache/)
+USER appuser
+RUN pip install --no-cache-dir --user -r requirements.txt
+RUN playwright install chromium
+
+# Copy application code (as root for proper ownership)
 USER root
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Install Playwright browsers with all dependencies
-RUN playwright install --with-deps chromium
-
-# Copy application code and set ownership
 COPY . .
 RUN chown -R appuser:appuser /app
-RUN chown -R appuser:appuser /root/.cache/ms-playwright
 
-# Switch to appuser for running
+# Switch back to appuser for running
 USER appuser
-
-# Set PLAYWRIGHT_BROWSERS_PATH environment variable
-ENV PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
 
 # Expose port
 EXPOSE 8000
