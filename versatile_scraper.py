@@ -65,6 +65,20 @@ class VersatileScraper:
             'content': {}
         }
     
+    def is_captcha_page(self, page_text: str) -> bool:
+        """Check if page is a CAPTCHA/verification page"""
+        captcha_keywords = [
+            'verifying you are human',
+            'verifying you are real',
+            'human verification',
+            'captcha',
+            'please wait',
+            'security check',
+            'are you a robot'
+        ]
+        page_text_lower = page_text.lower()
+        return any(keyword in page_text_lower for keyword in captcha_keywords)
+
     async def fetch_page(self):
         """Fetch webpage using Playwright"""
         logger.info("Fetching: " + self.url, extra={"url": self.url})
@@ -89,8 +103,17 @@ class VersatileScraper:
                 # Wait for content to load
                 await page.wait_for_timeout(2000)
                 
-                # Get page content
+                # Get page content and text
                 self.raw_html = await page.content()
+                
+                # Get text content using evaluate (works with all Playwright versions)
+                page_text = await page.evaluate('() => document.body.innerText')
+                
+                # Check for CAPTCHA/verification page
+                if self.is_captcha_page(page_text):
+                    logger.warning("CAPTCHA/Verification page detected - skipping URL", extra={"url": self.url})
+                    self.raw_html = None
+                    return
                 
                 # Clean up - remove scripts and styles
                 self.raw_html = re.sub(r'<script[^>]*>.*?</script>', '', self.raw_html, flags=re.DOTALL)

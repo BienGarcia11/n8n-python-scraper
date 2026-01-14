@@ -50,3 +50,4 @@ scraped_data.json
 embeddings.json
 support_sitemap.xml
 setup_instructions.md
+test_scraper.py
