@@ -3,7 +3,7 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies and Playwright browser dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -27,32 +27,33 @@ RUN apt-get update && apt-get install -y \
     libxshmfence1 \
     libxext6 \
     libxinerama1 \
-    libdbus-1-3 \
+    libdbus-1.3 \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
+# Create non-root user first
 RUN useradd -m appuser
 
-# Copy requirements first for better caching
+# Copy requirements
 COPY requirements.txt .
 
-# Install Python dependencies as ROOT (so playwright command is available)
+# Install Python dependencies as root (to ensure playwright command is available globally)
 USER root
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browsers as ROOT
+# Install Playwright browsers with all dependencies
 RUN playwright install --with-deps chromium
 
 # Copy application code and set ownership
 COPY . .
 RUN chown -R appuser:appuser /app
-RUN chown -R appuser:appuser /home/appuser
+RUN chown -R appuser:appuser /root/.cache/ms-playwright
 
 # Switch to appuser for running
 USER appuser
 
-# Set Playwright browser path
-ENV PLAYWRIGHT_BROWSERS_PATH=/home/appuser/.cache/ms-playwright
+# Set PLAYWRIGHT_BROWSERS_PATH environment variable
+ENV PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
 
 # Expose port
 EXPOSE 8000
