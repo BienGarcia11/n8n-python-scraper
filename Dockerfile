@@ -3,7 +3,7 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies and Playwright browser dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -30,22 +30,17 @@ RUN apt-get update && apt-get install -y \
     libdbus-1-3 \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Python packages and Playwright browser as ROOT
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+RUN playwright install --with-deps chromium
+
 # Create non-root user
 RUN useradd -m appuser
 
-# Copy requirements
-COPY requirements.txt .
-
-# Install Python dependencies as ROOT (system-wide)
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Install Playwright chromium browser
-RUN playwright install chromium
-
-# Copy application code and set ownership
+# Copy application code
 COPY . .
 RUN chown -R appuser:appuser /app
-RUN chown -R appuser:appuser /root/.cache/ms-playwright
 
 # Switch to appuser for running
 USER appuser
