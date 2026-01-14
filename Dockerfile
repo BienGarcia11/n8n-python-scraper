@@ -9,10 +9,6 @@ RUN apt-get update && apt-get install -y \
     g++ \
     make \
     curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Playwright dependencies first (before user creation)
-RUN apt-get update && apt-get install -y \
     libnss3 \
     libatk1.0-0 \
     libatk-bridge2.0-0 \
@@ -31,24 +27,32 @@ RUN apt-get update && apt-get install -y \
     libxshmfence1 \
     libxext6 \
     libxinerama1 \
-    libdbus-1-3
+    libdbus-1-3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user first (so Playwright installs to their home directory)
+RUN useradd -m appuser
 
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies as appuser
+USER appuser
+RUN pip install --no-cache-dir --user -r requirements.txt
 
-# Install Playwright browsers AS ROOT (before creating appuser)
+# Install Playwright browsers as appuser (this puts them in /home/appuser/.cache/ms-playwright/)
 RUN playwright install --with-deps chromium
 
-# Copy application code
+# Copy application code (as root for proper ownership)
+USER root
 COPY . .
+RUN chown -R appuser:appuser /app
 
-# Create a non-root user
-RUN useradd -m appuser && \
-    chown -R appuser:appuser /app
+# Switch back to appuser for running
 USER appuser
+
+# Set Playwright to use the browser cache path
+ENV PLAYWRIGHT_BROWSERS_PATH=/home/appuser/.cache/ms-playwright
 
 # Expose port
 EXPOSE 8000
