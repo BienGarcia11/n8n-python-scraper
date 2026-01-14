@@ -11,8 +11,14 @@ from openai import OpenAI
 import numpy as np
 from dotenv import load_dotenv
 
+# Import structured logging
+from logger_config import setup_logger
+
 # Load environment variables from .env file
 load_dotenv()
+
+# Setup logger
+logger = setup_logger(__name__)
 
 
 class EmbeddingGenerator:
@@ -24,10 +30,10 @@ class EmbeddingGenerator:
         
         # Debug: Print if key was found (without revealing it)
         if self.api_key:
-            print(f"✓ API key loaded (starts with: {self.api_key[:7]}...)")
+            logger.info("API key loaded", extra={"key_prefix": self.api_key[:7]})
         else:
-            print(f"✗ API key not found in environment variables")
-            print(f"  Current env vars: {[k for k in os.environ.keys() if 'OPENAI' in k.upper()]}")
+            logger.error("API key not found in environment variables")
+            logger.debug(f"Current env vars: {[k for k in os.environ.keys() if 'OPENAI' in k.upper()]}")
             raise ValueError("OpenAI API key not found. Please set OPENAI_API_KEY environment variable.")
         
         # Initialize OpenAI client with new v1.0+ API
@@ -39,21 +45,21 @@ class EmbeddingGenerator:
     
     def load_data(self, json_file: str) -> Dict:
         """Load scraped data from JSON file"""
-        print(f"Loading data from {json_file}...")
+        logger.info(f"Loading data from {json_file}", extra={"file": json_file})
         
         with open(json_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
-        print(f"✓ Data loaded successfully")
-        print(f"  - Title: {data.get('metadata', {}).get('title', 'N/A')}")
-        print(f"  - URL: {data.get('url', 'N/A')}")
-        print(f"  - Full text length: {len(data.get('full_text', ''))} characters")
-        
+        logger.info(f"Data loaded successfully", extra={
+            "title": data.get('metadata', {}).get('title', 'N/A'),
+            "url": data.get('url', 'N/A'),
+            "text_length": len(data.get('full_text', ''))
+        })
         return data
     
     def chunk_text(self, text: str, chunk_size: int = 800, overlap: int = 200) -> List[Dict]:
         """Split text into chunks respecting sentence boundaries using token-aware chunking"""
-        print(f"\nChunking text (max tokens: {chunk_size}, overlap tokens: {overlap})...")
+        logger.info(f"Chunking text", extra={"max_tokens": chunk_size, "overlap_tokens": overlap})
         
         import re
         
@@ -104,10 +110,6 @@ class EmbeddingGenerator:
                 current_chunk.append(sentence)
                 current_tokens += sentence_tokens
             
-            # Progress indicator
-            if len(chunks) > 0 and len(chunks) % 5 == 0 and len(current_chunk) == 1:
-                print(f"  Chunks created: {len(chunks)}...", end='\r')
-        
         # Don't forget to add the last chunk if it has content
         if current_chunk:
             chunks.append({
@@ -116,9 +118,8 @@ class EmbeddingGenerator:
                 'token_count': current_tokens
             })
         
-        print(f"✓ Created {len(chunks)} chunks (respecting sentence boundaries)")
         avg_tokens = sum(c['token_count'] for c in chunks) / len(chunks) if chunks else 0
-        print(f"  Average tokens per chunk: {avg_tokens:.1f}")
+        logger.info(f"Created {len(chunks)} chunks", extra={"chunks_count": len(chunks), "avg_tokens": avg_tokens})
         return chunks
     
     def generate_embedding(self, text: str) -> List[float]:
@@ -131,13 +132,12 @@ class EmbeddingGenerator:
             embedding = response.data[0].embedding
             return embedding
         except Exception as e:
-            print(f"✗ Error generating embedding: {e}")
+            logger.error(f"Error generating embedding: {e}")
             return None
     
     def generate_embeddings_batch(self, chunks: List[Dict], batch_size: int = 20) -> List[Dict]:
         """Generate embeddings for multiple chunks in batches - reduced batch size for better performance"""
-        print(f"\nGenerating embeddings using {self.model}...")
-        print(f"Processing {len(chunks)} chunks in smaller batches of {batch_size}...")
+        logger.info(f"Generating embeddings using {self.model}", extra={"total_chunks": len(chunks), "batch_size": batch_size})
         
         results = []
         total_chunks = len(chunks)
@@ -147,7 +147,7 @@ class EmbeddingGenerator:
             batch = chunks[i:i + batch_size]
             batch_num = i // batch_size + 1
             
-            print(f"\nBatch {batch_num}/{total_batches} ({len(batch)} chunks)...", end='\r')
+            logger.debug(f"Processing batch {batch_num}/{total_batches}", extra={"batch_size": len(batch)})
             
             batch_texts = [chunk['text'] for chunk in batch]
             
@@ -165,10 +165,10 @@ class EmbeddingGenerator:
                         'embedding': embedding
                     })
                 
-                print(f"Batch {batch_num}/{total_batches} ({len(batch)} chunks) ✓")
+                logger.debug(f"Completed batch {batch_num}/{total_batches}", extra={"batch_size": len(batch)})
                 
             except Exception as e:
-                print(f"Batch {batch_num}/{total_batches} failed: {e}")
+                logger.error(f"Batch {batch_num}/{total_batches} failed: {e}", extra={"batch_num": batch_num})
                 # Add chunks without embeddings
                 for chunk in batch:
                     results.append({
@@ -177,12 +177,16 @@ class EmbeddingGenerator:
                     })
         
         successful = sum(1 for r in results if r['embedding'] is not None)
-        print(f"\n✓ Generated embeddings: {successful}/{len(results)} chunks ({successful/len(results)*100:.1f}%)")
+        logger.info(f"Generated embeddings: {successful}/{len(results)} chunks", extra={
+            "successful": successful,
+            "total": len(results),
+            "success_rate": f"{successful/len(results)*100:.1f}%"
+        })
         return results
     
     def create_output(self, data: Dict, chunks_with_embeddings: List[Dict]) -> Dict:
         """Create final output structure"""
-        print("\nCreating output structure...")
+        logger.info("Creating output structure")
         
         # Extract metadata
         metadata = {
@@ -200,27 +204,28 @@ class EmbeddingGenerator:
             'chunks': chunks_with_embeddings
         }
         
-        print(f"✓ Output structure created")
-        print(f"  - Embedding dimension: {metadata['embedding_dimension']}")
-        print(f"  - Total chunks: {metadata['total_chunks']}")
+        logger.info(f"Output structure created", extra={
+            "embedding_dimension": metadata['embedding_dimension'],
+            "total_chunks": metadata['total_chunks']
+        })
         
         return output
     
     def save_embeddings(self, output: Dict, filename: str):
         """Save embeddings to JSON file"""
-        print(f"\nSaving to {filename}...")
+        logger.info(f"Saving to {filename}", extra={"filename": filename})
         
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(output, f, indent=2, ensure_ascii=False)
         
-        print(f"✓ Saved successfully!")
+        logger.info(f"Saved successfully")
     
     def process(self, input_file: str, output_file: str = 'embeddings.json', 
                 chunk_size: int = 800, overlap: int = 200) -> Dict:
         """Main processing pipeline - optimized for better performance"""
-        print("="*60)
-        print("EMBEDDING GENERATION")
-        print("="*60)
+        logger.info("="*60)
+        logger.info("EMBEDDING GENERATION")
+        logger.info("="*60)
         
         # Step 1: Load data
         data = self.load_data(input_file)
@@ -237,14 +242,14 @@ class EmbeddingGenerator:
         # Step 5: Save to file
         self.save_embeddings(output, output_file)
         
-        print("\n" + "="*60)
-        print("SUMMARY")
-        print("="*60)
-        print(f"✓ Successfully processed {data.get('url', 'unknown')}")
-        print(f"✓ Created {len(chunks)} chunks with embeddings")
-        print(f"✓ Saved to {output_file}")
-        print(f"✓ Model: {self.model}")
-        print("="*60 + "\n")
+        logger.info("="*60)
+        logger.info("SUMMARY", extra={
+            "url": data.get('url', 'unknown'),
+            "chunks_count": len(chunks),
+            "output_file": output_file,
+            "model": self.model
+        })
+        logger.info("="*60)
         
         return output
 

@@ -9,3 +9,4 @@ httpx
 fastapi
 uvicorn[standard]
 supabase
+python-json-logger

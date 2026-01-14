@@ -21,8 +21,14 @@ from dotenv import load_dotenv
 from versatile_scraper import VersatileScraper, WEBSITE_PRESETS
 from embedding_generator import EmbeddingGenerator
 
+# Import structured logging
+from logger_config import setup_logger
+
 # Load environment variables
 load_dotenv()
+
+# Setup logger
+logger = setup_logger(__name__)
 
 # Initialize FastAPI
 app = FastAPI(
@@ -48,7 +54,7 @@ def initialize_components():
     
     # Initialize Supabase client
     if not SUPABASE_URL or not SUPABASE_KEY:
-        print("WARNING: SUPABASE_URL or SUPABASE_KEY not set - Supabase features disabled")
+        logger.warning("SUPABASE_URL or SUPABASE_KEY not set - Supabase features disabled")
         supabase = None
     else:
         try:
@@ -57,25 +63,25 @@ def initialize_components():
                 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
             except TypeError as e:
                 # Fallback: try initializing without options to avoid proxy parameter issue
-                print(f"Warning: Using fallback Supabase initialization due to: {e}")
+                logger.warning(f"Using fallback Supabase initialization due to: {e}")
                 from supabase import Client as SupabaseClient
                 supabase = SupabaseClient(SUPABASE_URL, SUPABASE_KEY)
-            print("✓ Supabase client initialized")
+            logger.info("Supabase client initialized successfully")
         except Exception as e:
-            print(f"ERROR: Failed to initialize Supabase client: {e}")
+            logger.error(f"Failed to initialize Supabase client: {e}")
             supabase = None
     
     # Initialize embedding generator
     if not OPENAI_API_KEY:
-        print("WARNING: OPENAI_API_KEY not set - embedding generation disabled")
+        logger.warning("OPENAI_API_KEY not set - embedding generation disabled")
         embedder = None
     else:
         try:
             from embedding_generator import EmbeddingGenerator
             embedder = EmbeddingGenerator(api_key=OPENAI_API_KEY)
-            print("✓ Embedding generator initialized")
+            logger.info("Embedding generator initialized successfully")
         except Exception as e:
-            print(f"ERROR: Failed to initialize embedding generator: {e}")
+            logger.error(f"Failed to initialize embedding generator: {e}")
             embedder = None
 
 # Initialize components after app loads
@@ -124,9 +130,10 @@ def update_url_status(url_id: int, status: str, error_message: str = None) -> bo
             update_data["error_message"] = error_message
         
         response = supabase.table("url_queue").update(update_data).eq("id", url_id).execute()
+        logger.info(f"Updated URL {url_id} status to {status}")
         return True
     except Exception as e:
-        print(f"Error updating URL {url_id} status: {e}")
+        logger.error(f"Error updating URL {url_id} status: {e}", extra={"url_id": url_id, "status": status})
         return False
 
 
@@ -138,15 +145,15 @@ def delete_existing_documents(url: str) -> int:
         existing_count = len(check_response.data) if check_response.data else 0
         
         if existing_count > 0:
-            print(f"  Deleting {existing_count} existing chunks for {url}...")
+            logger.info(f"Deleting {existing_count} existing chunks for {url}", extra={"url": url, "count": existing_count})
             # Delete all documents for this URL
             delete_response = supabase.table("documents").delete().eq("url", url).execute()
-            print(f"  ✓ Deleted {existing_count} old chunks")
+            logger.info(f"Deleted {existing_count} old chunks", extra={"url": url, "count": existing_count})
             return existing_count
         
         return 0
     except Exception as e:
-        print(f"  ✗ Error deleting existing documents: {e}")
+        logger.error(f"Error deleting existing documents: {e}", extra={"url": url})
         return 0
 
 
@@ -183,11 +190,11 @@ def insert_documents(chunks_with_embeddings: List[Dict], scraped_data: Dict) -> 
             response = supabase.table("documents").insert(document).execute()
             inserted_count += 1
         
-        print(f"  ✓ Inserted {inserted_count} chunks into documents table")
+        logger.info(f"Inserted {inserted_count} chunks into documents table", extra={"url": scraped_data.get("url"), "count": inserted_count})
         return inserted_count
     
     except Exception as e:
-        print(f"  ✗ Error inserting documents: {e}")
+        logger.error(f"Error inserting documents: {e}", extra={"url": scraped_data.get("url")})
         raise
 
 
@@ -197,8 +204,7 @@ async def process_single_url(url_data: Dict) -> Dict:
     url_id = url_data["id"]
     attempt = url_data.get("attempts", 0) + 1
     
-    print(f"\n[URL {url_id}] Processing: {url}")
-    print(f"[URL {url_id}] Attempt {attempt}/{MAX_RETRIES}")
+    logger.info(f"Processing URL {url_id}: {url}", extra={"url_id": url_id, "url": url, "attempt": attempt})
     
     try:
         # Determine website type and configuration
@@ -206,12 +212,12 @@ async def process_single_url(url_data: Dict) -> Dict:
         config = WEBSITE_PRESETS.get(website_type, WEBSITE_PRESETS['blog'])
         
         # Scrape URL
-        print(f"[URL {url_id}] Scraping...")
+        logger.info(f"Scraping URL {url_id}", extra={"url_id": url_id, "url": url})
         scraper = VersatileScraper(url, config)
         scraped_data = await scraper.scrape()
         
         # Generate embeddings
-        print(f"[URL {url_id}] Generating embeddings...")
+        logger.info(f"Generating embeddings for URL {url_id}", extra={"url_id": url_id, "url": url})
         chunks = embedder.chunk_text(
             scraped_data["full_text"],
             chunk_size=800,
@@ -229,7 +235,8 @@ async def process_single_url(url_data: Dict) -> Dict:
         # Update URL status to completed
         update_url_status(url_id, "completed")
         
-        print(f"[URL {url_id}] ✓ SUCCESS - Processed {inserted_count} chunks (deleted {deleted_count} old)")
+        logger.info(f"Successfully processed URL {url_id}: {inserted_count} chunks (deleted {deleted_count} old)", 
+                   extra={"url_id": url_id, "url": url, "chunks_inserted": inserted_count, "chunks_deleted": deleted_count, "attempts": attempt})
         
         return {
             "url": url,
@@ -242,12 +249,14 @@ async def process_single_url(url_data: Dict) -> Dict:
     
     except Exception as e:
         error_message = str(e)
-        print(f"[URL {url_id}] ✗ FAILED: {error_message}")
+        logger.error(f"Failed to process URL {url_id}: {error_message}", 
+                    extra={"url_id": url_id, "url": url, "attempt": attempt, "error": error_message})
         
         # Check if we should retry
         if attempt < MAX_RETRIES:
             backoff_time = BACKOFF_TIMES[min(attempt - 1, len(BACKOFF_TIMES) - 1)]
-            print(f"[URL {url_id}] Retrying in {backoff_time} seconds...")
+            logger.warning(f"Retrying URL {url_id} in {backoff_time} seconds", 
+                         extra={"url_id": url_id, "url": url, "attempt": attempt, "backoff_time": backoff_time})
             
             # Update attempts count
             update_url_status(url_id, "pending", f"Attempt {attempt} failed: {error_message}")
@@ -276,16 +285,14 @@ async def process_single_url(url_data: Dict) -> Dict:
 
 async def process_batch(batch_size: int = BATCH_SIZE) -> Dict:
     """Process a batch of URLs from url_queue"""
-    print(f"\n{'='*60}")
-    print(f"FETCHING BATCH (size: {batch_size})")
-    print(f"{'='*60}")
+    logger.info(f"Fetching batch of {batch_size} URLs from queue")
     
     # Fetch pending URLs
     response = supabase.table("url_queue").select("*").eq("status", "pending").limit(batch_size).execute()
     pending_urls = response.data if response.data else []
     
     if not pending_urls:
-        print("No pending URLs found in queue")
+        logger.info("No pending URLs found in queue")
         return {
             "total_processed": 0,
             "successful": 0,
@@ -298,7 +305,7 @@ async def process_batch(batch_size: int = BATCH_SIZE) -> Dict:
             "details": []
         }
     
-    print(f"Found {len(pending_urls)} pending URLs")
+    logger.info(f"Found {len(pending_urls)} pending URLs")
     
     # Update status to processing
     url_ids = [url["id"] for url in pending_urls]
@@ -306,7 +313,7 @@ async def process_batch(batch_size: int = BATCH_SIZE) -> Dict:
         update_url_status(url_id, "processing")
     
     # Process URLs in parallel
-    print(f"\nProcessing {len(pending_urls)} URLs in parallel...")
+    logger.info(f"Processing {len(pending_urls)} URLs in parallel")
     results = await asyncio.gather(*[
         process_single_url(url_data) 
         for url_data in pending_urls
@@ -337,9 +344,7 @@ async def process_all_urls(batch_size: int = BATCH_SIZE) -> Dict:
     """Process all pending URLs in batches"""
     start_time = time.time()
     
-    print(f"\n{'='*60}")
-    print("STARTING FULL QUEUE PROCESSING")
-    print(f"{'='*60}")
+    logger.info("Starting full queue processing", extra={"batch_size": batch_size})
     
     total_stats = {
         "total_processed": 0,
@@ -356,9 +361,7 @@ async def process_all_urls(batch_size: int = BATCH_SIZE) -> Dict:
     batch_num = 0
     while True:
         batch_num += 1
-        print(f"\n{'#'*60}")
-        print(f"BATCH #{batch_num}")
-        print(f"{'#'*60}")
+        logger.info(f"BATCH #{batch_num}", extra={"batch_num": batch_num})
         
         # Process a batch
         batch_result = await process_batch(batch_size)
@@ -375,12 +378,12 @@ async def process_all_urls(batch_size: int = BATCH_SIZE) -> Dict:
         
         # Check if there are more pending URLs
         if batch_result["total_processed"] == 0:
-            print(f"\nNo more pending URLs. Processing complete.")
+            logger.info("No more pending URLs. Processing complete.")
             break
         
         # Small delay between batches
         if batch_result["total_processed"] > 0:
-            print(f"\nWaiting 2 seconds before next batch...")
+            logger.info(f"Waiting 2 seconds before next batch...")
             await asyncio.sleep(2)
     
     # Calculate total processing time
@@ -390,18 +393,7 @@ async def process_all_urls(batch_size: int = BATCH_SIZE) -> Dict:
     total_stats["processing_time"] = f"{minutes}m {seconds}s"
     
     # Print final summary
-    print(f"\n{'='*60}")
-    print("FINAL SUMMARY")
-    print(f"{'='*60}")
-    print(f"Total URLs processed: {total_stats['total_processed']}")
-    print(f"Successful: {total_stats['successful']}")
-    print(f"Failed: {total_stats['failed']}")
-    print(f"Total chunks inserted: {total_stats['total_chunks_inserted']}")
-    print(f"Total chunks deleted: {total_stats['total_chunks_deleted']}")
-    print(f"Refreshed URLs: {total_stats['refreshed_urls']}")
-    print(f"New URLs: {total_stats['new_urls']}")
-    print(f"Processing time: {total_stats['processing_time']}")
-    print(f"{'='*60}\n")
+    logger.info("FINAL SUMMARY", extra=total_stats)
     
     return total_stats
 

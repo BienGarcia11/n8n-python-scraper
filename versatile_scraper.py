@@ -12,6 +12,12 @@ from typing import Dict, List, Optional, Union
 from playwright.async_api import async_playwright
 from bs4 import BeautifulSoup
 
+# Import structured logging
+from logger_config import setup_logger
+
+# Setup logger
+logger = setup_logger(__name__)
+
 
 class VersatileScraper:
     """Flexible web scraper that can be adapted for different websites"""
@@ -61,7 +67,7 @@ class VersatileScraper:
     
     async def fetch_page(self):
         """Fetch webpage using Playwright"""
-        print(f"Fetching: {self.url}")
+        logger.info(f"Fetching: {self.url}", extra={"url": self.url})
         
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -87,10 +93,10 @@ class VersatileScraper:
                 self.raw_html = re.sub(r'<script[^>]*>.*?</script>', '', self.raw_html, flags=re.DOTALL)
                 self.raw_html = re.sub(r'<style[^>]*>.*?</style>', '', self.raw_html, flags=re.DOTALL)
                 
-                print("✓ Page fetched successfully")
+                logger.info(f"Page fetched successfully", extra={"url": self.url, "html_length": len(self.raw_html)})
                 
             except Exception as e:
-                print(f"✗ Error fetching page: {e}")
+                logger.error(f"Error fetching page: {e}", extra={"url": self.url})
                 raise
             finally:
                 await browser.close()
@@ -98,7 +104,7 @@ class VersatileScraper:
     def parse_html(self):
         """Parse HTML using BeautifulSoup"""
         self.soup = BeautifulSoup(self.raw_html, 'html.parser')
-        print("✓ HTML parsed successfully")
+        logger.debug("HTML parsed successfully")
     
     def extract_metadata(self) -> Dict:
         """Extract metadata from page"""
@@ -360,8 +366,7 @@ class VersatileScraper:
     
     async def scrape(self) -> Dict:
         """Main scraping method"""
-        print(f"Scraping: {self.url}")
-        print(f"Configuration: {self.config['name']}")
+        logger.info(f"Starting scrape for: {self.url}", extra={"url": self.url, "config": self.config['name']})
         
         # Fetch page
         await self.fetch_page()
@@ -374,14 +379,15 @@ class VersatileScraper:
         self.data['content'] = self.extract_content()
         self.data['full_text'] = self.extract_full_text()
         
-        print("Data extracted successfully")
+        logger.info(f"Data extracted successfully", extra={"url": self.url, "title": self.data.get('metadata', {}).get('title', 'N/A')})
         return self.data
     
     def save_to_json(self, filename: str):
         """Save scraped data to JSON file"""
+        logger.info(f"Saving scraped data to {filename}", extra={"filename": filename, "url": self.url})
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(self.data, f, indent=2, ensure_ascii=False)
-        print(f"Data saved to {filename}")
+        logger.info(f"Data saved successfully", extra={"filename": filename})
 
 
 # Preset configurations for common website types
@@ -473,32 +479,31 @@ async def main():
     output_file = "scraped_data.json"
     scraper.save_to_json(output_file)
     
-    # Print summary
-    print("\n" + "="*60)
-    print("SCRAPING SUMMARY")
-    print("="*60)
-    print(f"Title: {data.get('metadata', {}).get('title', 'N/A')}")
-    print(f"URL: {data['url']}")
-    print(f"Configuration: {data.get('scraper_config', 'N/A')}")
-    print(f"Headings found: {len(data.get('content', {}).get('headings', []))}")
-    print(f"Paragraphs found: {len(data.get('content', {}).get('paragraphs', []))}")
-    print(f"Lists found: {len(data.get('content', {}).get('lists', []))}")
-    print(f"Links found: {len(data.get('content', {}).get('links', []))}")
-    print(f"Images found: {len(data.get('content', {}).get('images', []))}")
-    print(f"Full text length: {len(data.get('full_text', ''))} characters")
-    print("="*60 + "\n")
+    # Log summary
+    summary = {
+        "title": data.get('metadata', {}).get('title', 'N/A'),
+        "url": data['url'],
+        "configuration": data.get('scraper_config', 'N/A'),
+        "headings_count": len(data.get('content', {}).get('headings', [])),
+        "paragraphs_count": len(data.get('content', {}).get('paragraphs', [])),
+        "lists_count": len(data.get('content', {}).get('lists', [])),
+        "links_count": len(data.get('content', {}).get('links', [])),
+        "images_count": len(data.get('content', {}).get('images', [])),
+        "full_text_length": len(data.get('full_text', ''))
+    }
+    logger.info("SCRAPING SUMMARY", extra=summary)
     
     # Automatically generate embeddings after scraping
-    print("Generating embeddings...")
+    logger.info("Generating embeddings...")
     try:
         from embedding_generator import EmbeddingGenerator
         generator = EmbeddingGenerator()
         # Use scraped_data.json with optimized parameters
         generator.process(input_file=output_file, chunk_size=800, overlap=100)
-        print("✓ Embeddings generated successfully")
+        logger.info("Embeddings generated successfully")
     except Exception as e:
-        print(f"⚠ Warning: Could not generate embeddings: {e}")
-        print("Make sure OPENAI_API_KEY is set in .env file")
+        logger.warning(f"Could not generate embeddings: {e}", extra={"error": str(e)})
+        logger.warning("Make sure OPENAI_API_KEY is set in .env file")
 
 
 if __name__ == "__main__":
