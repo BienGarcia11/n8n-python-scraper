@@ -10,12 +10,11 @@ from tqdm.asyncio import tqdm
 
 # --- CONFIGURATION ---
 SITEMAP_URL = "https://support.fyi.app/hc/sitemap.xml" 
-OUTPUT_FILE = "scraped_final_optimized.xlsx"
+OUTPUT_FILE = "scraped_data.xlsx"
 TEMP_CSV = "temp_data.csv"
 
-# --- OPTIMIZATION SETTINGS ---
 MAX_CONCURRENCY = 15
-BATCH_SIZE = 100          # REDUCED from 500. Restart browser every 100 URLs to prevent lag.
+BATCH_SIZE = 100
 BYPASS_CACHE = True
 USE_MAGIC = True
 
@@ -56,6 +55,7 @@ class Crawl4AISilencer:
 sys.stdout = Crawl4AISilencer(sys.stdout)
 sys.stderr = Crawl4AISilencer(sys.stderr)
 
+# --- SCRAPER LOGIC ---
 def get_all_urls_recursive(start_url):
     urls_to_scrape = []
     sitemap_queue = [start_url]
@@ -89,7 +89,6 @@ def get_all_urls_recursive(start_url):
     return list(set(urls_to_scrape))
 
 async def process_batch(crawler, batch_urls):
-    """Scrapes a list of URLs and returns results."""
     semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
 
     async def limited_arun(url):
@@ -109,7 +108,6 @@ async def process_batch(crawler, batch_urls):
     tasks = [limited_arun(url) for url in batch_urls]
     results = []
     
-    # Process batch
     for future in tqdm(asyncio.as_completed(tasks), total=len(batch_urls), desc="Scraping Batch"):
         result = await future
         
@@ -130,53 +128,44 @@ async def process_batch(crawler, batch_urls):
             
     return results
 
-async def main():
+async def run_scraper():
+    """Main function to be called by manager.py"""
+    sys.stdout.write("Worker: Starting Scraper...\n")
+    
     urls = get_all_urls_recursive(SITEMAP_URL)
     total_urls = len(urls)
     
     if total_urls == 0:
-        return
+        return None
 
-    # Break URLs into smaller chunks (Batches)
     batches = [urls[i:i + BATCH_SIZE] for i in range(0, len(urls), BATCH_SIZE)]
     
-    # Use a fresh browser for each batch to prevent slowdown
     for i, batch in enumerate(batches, 1):
-        sys.stdout.write(f"\nStarting Batch {i}/{len(batches)} (Fresh Browser)...\n")
+        sys.stdout.write(f"\nWorker: Batch {i}/{len(batches)}...\n")
         
-        # Create a NEW browser context for this batch
         async with AsyncWebCrawler(verbose=False, headless=True) as crawler:
             batch_results = await process_batch(crawler, batch)
         
-        # Save results to CSV (Append mode)
         df_batch = pd.DataFrame(batch_results)
-        
-        # Check if file exists to write header only once
         file_exists = os.path.exists(TEMP_CSV)
-        
         df_batch.to_csv(TEMP_CSV, mode='a', header=not file_exists, index=False)
         
-        # Clear memory explicitly
         del batch_results
         del df_batch
 
-    # Final conversion to Excel
-    sys.stdout.write(f"\nProcessing Final File...\n")
+    sys.stdout.write(f"\nWorker: Finalizing Excel...\n")
     df_final = pd.read_csv(TEMP_CSV)
-    
-    # Clean content length just in case
     df_final['content'] = df_final['content'].astype(str).str[:32000]
-    
     df_final.to_excel(OUTPUT_FILE, index=False)
     
-    # Cleanup temp file
     if os.path.exists(TEMP_CSV):
         os.remove(TEMP_CSV)
         
-    sys.stdout.write(f"\nSaved: {OUTPUT_FILE}\n")
+    sys.stdout.write(f"Worker: Done. Saved to {OUTPUT_FILE}\n")
+    return OUTPUT_FILE
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        asyncio.run(run_scraper())
     except KeyboardInterrupt:
         sys.stdout.write("\nStopped by user.\n")

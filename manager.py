@@ -1,27 +1,24 @@
 import asyncio
 import pandas as pd
+from dotenv import load_dotenv  # <--- IMPORT THIS
 from worker import run_scraper
-from embedder import generate_embeddings # Import the new embedder
+from embedder import generate_embeddings
+
+# Load environment variables at the very start
+load_dotenv()  # <--- ADD THIS
 
 # --- POST PROCESSING LOGIC ---
 def post_processing(file_path):
-    """
-    Runs after scraping. 
-    1. Scrapes (already done).
-    2. Generates Embeddings.
-    """
     print(f"\nManager: Loading data from {file_path}...")
     
     try:
         df = pd.read_excel(file_path)
         
-        # Stats
         total = len(df)
         success = len(df[df['status'] == 'Success'])
         print(f"Manager: Total Rows: {total}")
         print(f"Manager: Successful Scrapes: {success}")
         
-        # --- RUN EMBEDDER ---
         if success > 0:
             print("Manager: Starting Embedding process...")
             generate_embeddings(input_file=file_path, output_file="embedded_data.xlsx")
@@ -34,11 +31,9 @@ def post_processing(file_path):
 # --- MAIN CONTROLLER ---
 async def main():
     try:
-        # 1. RUN SCRAPER
         output_file = await run_scraper()
         
         if output_file:
-            # 2. RUN EMBEDDER
             post_processing(output_file)
         else:
             print("Manager: Worker returned no file. Exiting.")
