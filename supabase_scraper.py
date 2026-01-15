@@ -47,6 +47,10 @@ PORT = int(os.getenv("PORT", "8000"))
 supabase = None
 embedder = None
 
+# Daemon mode state
+daemon_running = False
+daemon_task = None
+
 # Initialize components (with graceful degradation if env vars missing)
 def initialize_components():
     """Initialize Supabase and OpenAI clients with graceful degradation"""
@@ -87,12 +91,86 @@ def initialize_components():
 # Initialize components after app loads
 initialize_components()
 
+# Daemon configuration
+DAEMON_POLL_INTERVAL = int(os.getenv("DAEMON_POLL_INTERVAL", "10"))  # Check every 10 seconds
+DAEMON_BATCH_SIZE = int(os.getenv("DAEMON_BATCH_SIZE", str(BATCH_SIZE)))
+
 # Batch size for parallel processing
 BATCH_SIZE = 3
 # Maximum retry attempts
 MAX_RETRIES = 3
 # Backoff times in seconds
 BACKOFF_TIMES = [30, 60, 120]
+
+
+def reset_stuck_urls() -> Dict:
+    """
+    Reset URLs that were in 'processing' status when the app restarted.
+    This ensures they can be reprocessed after a crash or restart.
+    """
+    try:
+        logger.info("Checking for stuck URLs in 'processing' status")
+        
+        # Find URLs stuck in processing status
+        response = supabase.table("url_queue").select("*").eq("status", "processing").execute()
+        stuck_urls = response.data if response.data else []
+        
+        if not stuck_urls:
+            logger.info("No stuck URLs found")
+            return {"reset_count": 0}
+        
+        logger.info(f"Found {len(stuck_urls)} stuck URLs, resetting to 'pending'")
+        
+        # Reset them to pending status
+        reset_count = 0
+        for url_data in stuck_urls:
+            url_id = url_data["id"]
+            update_url_status(url_id, "pending", "Reset from processing status after restart")
+            reset_count += 1
+        
+        logger.info(f"Successfully reset {reset_count} stuck URLs", extra={"reset_count": reset_count})
+        return {"reset_count": reset_count}
+    
+    except Exception as e:
+        logger.error(f"Error resetting stuck URLs: {e}")
+        return {"reset_count": 0, "error": str(e)}
+
+
+async def daemon_process_loop():
+    """
+    Background task that continuously processes URLs in daemon mode.
+    Checks for pending URLs every DAEMON_POLL_INTERVAL seconds.
+    """
+    global daemon_running
+    
+    logger.info("Daemon process loop started", extra={
+        "poll_interval": DAEMON_POLL_INTERVAL,
+        "batch_size": DAEMON_BATCH_SIZE
+    })
+    
+    while daemon_running:
+        try:
+            # Process one batch
+            batch_result = await process_batch(DAEMON_BATCH_SIZE)
+            
+            # Log results if we processed something
+            if batch_result["total_processed"] > 0:
+                logger.info("Daemon batch completed", extra={
+                    "processed": batch_result["total_processed"],
+                    "successful": batch_result["successful"],
+                    "failed": batch_result["failed"],
+                    "chunks_inserted": batch_result["total_chunks_inserted"]
+                })
+            
+            # Wait before next poll
+            await asyncio.sleep(DAEMON_POLL_INTERVAL)
+        
+        except Exception as e:
+            logger.error(f"Error in daemon process loop: {e}")
+            # Continue running even if there's an error
+            await asyncio.sleep(DAEMON_POLL_INTERVAL)
+    
+    logger.info("Daemon process loop stopped")
 
 
 class ScrapeRequest(BaseModel):
@@ -398,6 +476,51 @@ async def process_all_urls(batch_size: int = BATCH_SIZE) -> Dict:
     return total_stats
 
 
+# Startup event handler
+@app.on_event("startup")
+async def startup_event():
+    """
+    Startup event that initializes the daemon and resets stuck URLs.
+    This runs automatically when the application starts.
+    """
+    global daemon_running, daemon_task
+    
+    logger.info("Application starting up...")
+    
+    # Reset stuck URLs from previous run
+    if supabase:
+        reset_stuck_urls()
+    
+    # Auto-start daemon mode if configured
+    auto_start_daemon = os.getenv("AUTO_START_DAEMON", "false").lower() == "true"
+    if auto_start_daemon:
+        logger.info("Auto-starting daemon mode (AUTO_START_DAEMON=true)")
+        daemon_running = True
+        daemon_task = asyncio.create_task(daemon_process_loop())
+        logger.info("Daemon mode auto-started successfully")
+    else:
+        logger.info("Daemon mode not auto-started. Use /daemon/start to enable.")
+
+
+# Shutdown event handler
+@app.on_event("shutdown")
+async def shutdown_event():
+    """
+    Shutdown event that cleanly stops the daemon.
+    This runs automatically when the application stops.
+    """
+    global daemon_running
+    
+    logger.info("Application shutting down...")
+    
+    if daemon_running:
+        logger.info("Stopping daemon mode...")
+        daemon_running = False
+        # Give the daemon a moment to stop gracefully
+        await asyncio.sleep(2)
+        logger.info("Daemon mode stopped")
+
+
 # API Endpoints
 
 @app.get("/")
@@ -590,6 +713,118 @@ async def queue_status():
         return JSONResponse(
             status_code=500,
             content={"error": str(e)}
+        )
+
+
+# Daemon control endpoints
+
+@app.post("/daemon/start")
+async def start_daemon():
+    """
+    Start the daemon mode.
+    The daemon will continuously process URLs in the background.
+    """
+    global daemon_running, daemon_task
+    
+    try:
+        if daemon_running:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "message": "Daemon is already running"
+                }
+            )
+        
+        logger.info("Starting daemon mode...")
+        daemon_running = True
+        daemon_task = asyncio.create_task(daemon_process_loop())
+        
+        return {
+            "success": True,
+            "message": "Daemon started successfully",
+            "daemon_running": True,
+            "poll_interval": DAEMON_POLL_INTERVAL,
+            "batch_size": DAEMON_BATCH_SIZE
+        }
+    
+    except Exception as e:
+        logger.error(f"Failed to start daemon: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "message": f"Failed to start daemon: {str(e)}"
+            }
+        )
+
+
+@app.post("/daemon/stop")
+async def stop_daemon():
+    """
+    Stop the daemon mode.
+    The background processing will stop after completing the current batch.
+    """
+    global daemon_running
+    
+    try:
+        if not daemon_running:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "message": "Daemon is not running"
+                }
+            )
+        
+        logger.info("Stopping daemon mode...")
+        daemon_running = False
+        
+        return {
+            "success": True,
+            "message": "Daemon stopped successfully",
+            "daemon_running": False
+        }
+    
+    except Exception as e:
+        logger.error(f"Failed to stop daemon: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "message": f"Failed to stop daemon: {str(e)}"
+            }
+        )
+
+
+@app.get("/daemon/status")
+async def daemon_status():
+    """
+    Get the current status of the daemon mode.
+    """
+    try:
+        # Get queue status
+        queue_stats = await queue_status()
+        
+        return {
+            "daemon_running": daemon_running,
+            "daemon_config": {
+                "poll_interval": DAEMON_POLL_INTERVAL,
+                "batch_size": DAEMON_BATCH_SIZE,
+                "auto_start": os.getenv("AUTO_START_DAEMON", "false").lower() == "true"
+            },
+            "queue_status": queue_stats,
+            "daemon_task_active": daemon_task is not None and not daemon_task.done() if daemon_task else False
+        }
+    
+    except Exception as e:
+        logger.error(f"Failed to get daemon status: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "daemon_running": daemon_running,
+                "error": str(e)
+            }
         )
 
 

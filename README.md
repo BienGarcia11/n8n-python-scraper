@@ -47,6 +47,8 @@ A production-ready web scraping RAG system that processes URLs, generates embedd
 - **Full Refresh Strategy**: Deletes old chunks before inserting new ones
 - **Detailed Logging**: Comprehensive console output for monitoring
 - **Health Checks**: `/health` endpoint for monitoring service status
+- **Daemon Mode**: Continuous background processing with automatic recovery
+- **Crash Recovery**: Automatically resets stuck URLs after restarts
 
 ### Web Scraping
 - **Versatile Scraper**: Handles multiple website types (blog, news, docs, ecommerce, Xero)
@@ -84,6 +86,11 @@ OPENAI_API_KEY=your_openai_api_key
 
 # Optional
 PORT=8000
+
+# Daemon Mode Configuration
+AUTO_START_DAEMON=false          # Auto-start daemon on app startup (true/false)
+DAEMON_POLL_INTERVAL=10          # Check for new URLs every N seconds (default: 10)
+DAEMON_BATCH_SIZE=3             # Process N URLs per batch in daemon mode (default: 3)
 ```
 
 ## Database Schema
@@ -374,7 +381,153 @@ Returns current queue statistics:
 }
 ```
 
+### 6. Daemon Control - Start
+```
+POST /daemon/start
+```
+Starts daemon mode for continuous background processing.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Daemon started successfully",
+  "daemon_running": true,
+  "poll_interval": 10,
+  "batch_size": 3
+}
+```
+
+### 7. Daemon Control - Stop
+```
+POST /daemon/stop
+```
+Stops daemon mode after completing current batch.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Daemon stopped successfully",
+  "daemon_running": false
+}
+```
+
+### 8. Daemon Status
+```
+GET /daemon/status
+```
+Returns current daemon status and configuration:
+
+```json
+{
+  "daemon_running": true,
+  "daemon_config": {
+    "poll_interval": 10,
+    "batch_size": 3,
+    "auto_start": false
+  },
+  "queue_status": {
+    "pending": 10,
+    "processing": 2,
+    "completed": 150,
+    "failed": 3
+  },
+  "daemon_task_active": true
+}
+```
+
 ## Usage Examples
+
+### Daemon Mode (Recommended for Production)
+
+Daemon mode provides continuous background processing with automatic recovery. This is the recommended approach for production deployments on Railway.
+
+**How Daemon Mode Works:**
+1. Call `/scrape` once → Daemon starts and processes current batch
+2. Daemon continues running in background
+3. Checks for new URLs every `DAEMON_POLL_INTERVAL` seconds (default: 10)
+4. Processes new URLs automatically as they're added to queue
+5. Railway restarts → App starts, resets stuck URLs, daemon continues
+6. Add more URLs later → Daemon automatically picks them up
+7. All URLs processed → Daemon waits for new URLs (doesn't exit)
+
+**Starting Daemon Mode:**
+
+**Option 1: Auto-start on deployment**
+```bash
+# Set environment variable
+railway variables set AUTO_START_DAEMON=true
+
+# Deploy
+railway up
+```
+
+**Option 2: Manual start via API**
+```bash
+# Start daemon
+curl -X POST https://your-railway-service.up.railway.app/daemon/start
+
+# Check daemon status
+curl https://your-railway-service.up.railway.app/daemon/status
+```
+
+**Example Workflow:**
+```
+Month 1: Call /scrape ONCE
+↓
+Scraper starts running (daemon mode)
+↓
+Processes 226 URLs
+↓
+Railway restarts → Scraper automatically recovers → Processes remaining 104 URLs
+↓
+[You add more URLs later]
+↓
+Call /scrape again (or daemon picks them up automatically)
+↓
+Processes the new URLs
+↓
+All 4988 URLs done
+```
+
+**Monitoring Daemon:**
+```bash
+# Check if daemon is running
+curl https://your-railway-service.up.railway.app/daemon/status
+
+# Response example:
+{
+  "daemon_running": true,
+  "daemon_config": {
+    "poll_interval": 10,
+    "batch_size": 3,
+    "auto_start": false
+  },
+  "queue_status": {
+    "pending": 15,
+    "processing": 3,
+    "completed": 4500,
+    "failed": 5
+  },
+  "daemon_task_active": true
+}
+```
+
+**Stopping Daemon (if needed):**
+```bash
+# Stop daemon
+curl -X POST https://your-railway-service.up.railway.app/daemon/stop
+```
+
+**Configuration:**
+```bash
+# Adjust polling interval (how often to check for new URLs)
+railway variables set DAEMON_POLL_INTERVAL=15  # Check every 15 seconds
+
+# Adjust batch size (URLs processed per cycle)
+railway variables set DAEMON_BATCH_SIZE=5  # Process 5 URLs at a time
+```
 
 ### Testing Locally
 
