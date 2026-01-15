@@ -41,14 +41,13 @@ A production-ready web scraping RAG system that processes URLs, generates embedd
 ## Features
 
 ### Core Capabilities
-- **Queue-Based Processing**: Processes URLs from Supabase `url_queue` table
+- **Always-On Processing**: App runs infinitely, continuously checking for and processing URLs
+- **Auto-Recovery**: Automatically recovers from Railway restarts without manual intervention
 - **Parallel Processing**: Handles 3 URLs concurrently for efficiency
 - **Retry Logic**: 3 attempts with exponential backoff (30s, 60s, 120s)
 - **Full Refresh Strategy**: Deletes old chunks before inserting new ones
 - **Detailed Logging**: Comprehensive console output for monitoring
 - **Health Checks**: `/health` endpoint for monitoring service status
-- **Daemon Mode**: Continuous background processing with automatic recovery
-- **Crash Recovery**: Automatically resets stuck URLs after restarts
 
 ### Web Scraping
 - **Versatile Scraper**: Handles multiple website types (blog, news, docs, ecommerce, Xero)
@@ -439,85 +438,77 @@ Returns current daemon status and configuration:
 
 ## Usage Examples
 
-### Daemon Mode (Recommended for Production)
+### How It Works (Simple & Always-On)
 
-Daemon mode provides continuous background processing with automatic recovery. This is the recommended approach for production deployments on Railway.
+The app runs **infinitely** by default, continuously checking for and processing URLs. No manual triggering needed!
 
-**How Daemon Mode Works:**
-1. Call `/scrape` once → Daemon starts and processes current batch
-2. Daemon continues running in background
-3. Checks for new URLs every `DAEMON_POLL_INTERVAL` seconds (default: 10)
-4. Processes new URLs automatically as they're added to queue
-5. Railway restarts → App starts, resets stuck URLs, daemon continues
-6. Add more URLs later → Daemon automatically picks them up
-7. All URLs processed → Daemon waits for new URLs (doesn't exit)
-
-**Starting Daemon Mode:**
-
-**Option 1: Auto-start on deployment**
-```bash
-# Set environment variable
-railway variables set AUTO_START_DAEMON=true
-
-# Deploy
-railway up
+**Simple Workflow:**
+```
+App Starts
+↓
+Daemon Auto-Starts (AUTO_START_DAEMON=true)
+↓
+Checks url_queue every 10 seconds
+↓
+Finds pending URLs? → YES → Process them
+↓
+Finds pending URLs? → NO → Wait 10 seconds
+↓
+Repeat forever...
 ```
 
-**Option 2: Manual start via API**
-```bash
-# Start daemon
-curl -X POST https://your-railway-service.up.railway.app/daemon/start
+**What Happens Automatically:**
 
+1. **App Starts** (on Railway deployment or restart)
+   - Loads configuration from `.env`
+   - Initializes Supabase and OpenAI clients
+   - Resets any URLs stuck in 'processing' status
+   
+2. **Daemon Auto-Starts**
+   - Begins infinite loop
+   - Checks queue every `DAEMON_POLL_INTERVAL` seconds (default: 10)
+
+3. **Processes URLs**
+   - Finds URLs with status='pending'
+   - Processes them in batches (default: 3 at a time)
+   - Each URL: Scrapes → Chunks → Embeds → Inserts
+   - Updates status to 'completed' or 'failed'
+
+4. **Railway Restart?**
+   - App crashes or Railway restarts
+   - App starts again
+   - Automatically resets stuck URLs to 'pending'
+   - Daemon resumes processing
+   - No data loss!
+
+5. **You Add New URLs?**
+   - Just INSERT into url_queue table
+   - Daemon detects them within 10 seconds
+   - Processes automatically
+   - No API calls needed!
+
+**Example Usage:**
+```
+Day 1: Deploy app → Auto-starts → Processes 330 URLs
+Railway restarts → Auto-recovers → Processes remaining URLs
+Day 2: Add 165 new URLs → Detected in 10s → Processed automatically
+Day 30: Add 500 new URLs → Detected in 10s → Processed automatically
+Month 2: Add 1000 new URLs → Detected in 10s → Processed automatically
+```
+
+**Manual Control (Optional):**
+```bash
 # Check daemon status
-curl https://your-railway-service.up.railway.app/daemon/status
-```
+curl https://your-service.up.railway.app/daemon/status
 
-**Example Workflow:**
-```
-Month 1: Call /scrape ONCE
-↓
-Scraper starts running (daemon mode)
-↓
-Processes 226 URLs
-↓
-Railway restarts → Scraper automatically recovers → Processes remaining 104 URLs
-↓
-[You add more URLs later]
-↓
-Call /scrape again (or daemon picks them up automatically)
-↓
-Processes the new URLs
-↓
-All 4988 URLs done
-```
+# Stop daemon (if needed - auto-starts again on restart)
+curl -X POST https://your-service.up.railway.app/daemon/stop
 
-**Monitoring Daemon:**
-```bash
-# Check if daemon is running
-curl https://your-railway-service.up.railway.app/daemon/status
+# Start daemon (if stopped)
+curl -X POST https://your-service.up.railway.app/daemon/start
 
-# Response example:
-{
-  "daemon_running": true,
-  "daemon_config": {
-    "poll_interval": 10,
-    "batch_size": 3,
-    "auto_start": false
-  },
-  "queue_status": {
-    "pending": 15,
-    "processing": 3,
-    "completed": 4500,
-    "failed": 5
-  },
-  "daemon_task_active": true
-}
-```
-
-**Stopping Daemon (if needed):**
-```bash
-# Stop daemon
-curl -X POST https://your-railway-service.up.railway.app/daemon/stop
+# Process one batch manually (rarely needed)
+curl -X POST https://your-service.up.railway.app/scrape-batch
 ```
 
 **Configuration:**
@@ -527,6 +518,9 @@ railway variables set DAEMON_POLL_INTERVAL=15  # Check every 15 seconds
 
 # Adjust batch size (URLs processed per cycle)
 railway variables set DAEMON_BATCH_SIZE=5  # Process 5 URLs at a time
+
+# Disable auto-start (if you want manual control only)
+railway variables set AUTO_START_DAEMON=false
 ```
 
 ### Testing Locally
