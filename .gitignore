@@ -1,2 +1,26 @@
 # Environment variables
 .env
+
+# Python virtual environment
+venv/
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+
+# IDE settings
+.idea/
+.vscode/
+
+# Jupyter Notebook
+*.ipynb
+
+# Build and distribution
+build/
+dist/
+*.egg-info/
+
+# Other
+__pycache__/

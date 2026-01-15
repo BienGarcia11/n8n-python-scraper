@@ -44,21 +44,23 @@ def post_processing(csv_file):
     except Exception as e:
         print(f"Manager: Error during processing: {e}")
 
-# --- MAIN CONTROLLER ---
-async def main():
+# --- NEW WRAPPER FOR API ---
+async def main_controller():
+    """
+    This is the function main.py calls. 
+    It mimics what the __main__ block did.
+    """
     try:
-        # 1. RUN SCRAPER
-        # Worker returns the CSV filename
         output_csv = await run_scraper()
         
         if output_csv:
-            # 2. RUN INTEGRATIONS
             post_processing(csv_file=output_csv)
         else:
-            print("Manager: Worker returned no file. Exiting.")
+            print("Controller: Worker returned no file. Exiting.")
             
-    except KeyboardInterrupt:
-        print("\nManager: Stopped by user.")
+    except Exception as e:
+        print(f"Controller: Error {e}")
 
+# Keep this for local testing
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main_controller())
