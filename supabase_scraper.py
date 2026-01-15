@@ -91,12 +91,12 @@ def initialize_components():
 # Initialize components after app loads
 initialize_components()
 
-# Daemon configuration
-DAEMON_POLL_INTERVAL = int(os.getenv("DAEMON_POLL_INTERVAL", "10"))  # Check every 10 seconds
-DAEMON_BATCH_SIZE = int(os.getenv("DAEMON_BATCH_SIZE", str(BATCH_SIZE)))
-
 # Batch size for parallel processing
 BATCH_SIZE = 3
+
+# Daemon configuration
+DAEMON_POLL_INTERVAL = int(os.getenv("DAEMON_POLL_INTERVAL", "10"))  # Check every 10 seconds
+DAEMON_BATCH_SIZE = int(os.getenv("DAEMON_BATCH_SIZE", "3"))  # Default to 3, can be overridden by env var
 # Maximum retry attempts
 MAX_RETRIES = 3
 # Backoff times in seconds
