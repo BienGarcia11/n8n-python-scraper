@@ -10,6 +10,9 @@ venv/
 # Temporary files
 *.tmp
 
+# CSV files
+*.csv
+
 # IDE settings
 .idea/
 .vscode/

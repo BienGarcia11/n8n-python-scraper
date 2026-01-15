@@ -12,7 +12,7 @@ from tqdm.asyncio import tqdm
 SITEMAP_URL = "https://support.fyi.app/hc/sitemap.xml" 
 OUTPUT_FILE = "scraped_data.csv" # Only CSV now
 
-MAX_CONCURRENCY = 1      # Changed from 15 to 1. Save memory.
+MAX_CONCURRENCY = 10      # Changed from 15 to 1. Save memory.
 BATCH_SIZE = 50           # Changed from 100 to 50.
 BYPASS_CACHE = True
 USE_MAGIC = True
