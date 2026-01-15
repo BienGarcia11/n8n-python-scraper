@@ -10,17 +10,19 @@ from tqdm.asyncio import tqdm
 
 # --- CONFIGURATION ---
 SITEMAP_URL = "https://support.fyi.app/hc/sitemap.xml" 
-OUTPUT_FILE = "scraped_data.xlsx"
-TEMP_CSV = "temp_data.csv"
+OUTPUT_CSV = "scraped_data.csv"      # Used for pipeline
+OUTPUT_XLSX = "scraped_data.xlsx"    # Used for viewing
 
 MAX_CONCURRENCY = 15
 BATCH_SIZE = 100
 BYPASS_CACHE = True
 USE_MAGIC = True
 
-# Delete old temp file if it exists
-if os.path.exists(TEMP_CSV):
-    os.remove(TEMP_CSV)
+# Delete old temp files if they exist
+if os.path.exists(OUTPUT_CSV):
+    os.remove(OUTPUT_CSV)
+if os.path.exists(OUTPUT_XLSX):
+    os.remove(OUTPUT_XLSX)
 
 # --- SILENCE LOGS ---
 logging.getLogger("crawl4ai").setLevel(logging.CRITICAL)
@@ -115,7 +117,7 @@ async def process_batch(crawler, batch_urls):
             results.append({
                 "url": result.url,
                 "title": result.metadata.get("title", "No Title"),
-                "content": result.markdown[:10000] if result.markdown else "",
+                "content": result.markdown, 
                 "status": "Success"
             })
         else:
@@ -132,6 +134,11 @@ async def run_scraper():
     """Main function to be called by manager.py"""
     sys.stdout.write("Worker: Starting Scraper...\n")
     
+    # Check if file exists to write header
+    file_exists = os.path.exists(OUTPUT_CSV)
+    if file_exists:
+        os.remove(OUTPUT_CSV) # Start fresh
+
     urls = get_all_urls_recursive(SITEMAP_URL)
     total_urls = len(urls)
     
@@ -147,22 +154,28 @@ async def run_scraper():
             batch_results = await process_batch(crawler, batch)
         
         df_batch = pd.DataFrame(batch_results)
-        file_exists = os.path.exists(TEMP_CSV)
-        df_batch.to_csv(TEMP_CSV, mode='a', header=not file_exists, index=False)
+        
+        # Append to CSV
+        df_batch.to_csv(OUTPUT_CSV, mode='a', header=not file_exists, index=False)
+        file_exists = True 
         
         del batch_results
         del df_batch
 
-    sys.stdout.write(f"\nWorker: Finalizing Excel...\n")
-    df_final = pd.read_csv(TEMP_CSV)
-    df_final['content'] = df_final['content'].astype(str).str[:32000]
-    df_final.to_excel(OUTPUT_FILE, index=False)
+    # Final Step: Save Excel copy for user viewing
+    sys.stdout.write(f"\nWorker: Finalizing files...\n")
+    df_final = pd.read_csv(OUTPUT_CSV)
     
-    if os.path.exists(TEMP_CSV):
-        os.remove(TEMP_CSV)
-        
-    sys.stdout.write(f"Worker: Done. Saved to {OUTPUT_FILE}\n")
-    return OUTPUT_FILE
+    # 1. Save Excel (Truncated for viewing safety)
+    df_view = df_final.copy()
+    df_view['content'] = df_view['content'].astype(str).str[:32000]
+    df_view.to_excel(OUTPUT_XLSX, index=False)
+    
+    # 2. Keep CSV full (No truncation for DB)
+    # The CSV already has full content, nothing needed here.
+    
+    sys.stdout.write(f"Worker: Done. Saved CSV and Excel.\n")
+    return OUTPUT_CSV
 
 if __name__ == "__main__":
     try:
