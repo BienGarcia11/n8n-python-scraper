@@ -81,7 +81,10 @@ def upload_to_supabase(csv_file):
                 "source": "scraper",
                 # Store chunking info for RAG deduplication
                 "chunk_index": int(row['chunk_index']),
-                "total_chunks": int(row['total_chunks'])
+                "total_chunks": int(row['total_chunks']),
+                # Include url and title in metadata
+                "url": url,
+                "title": str(row['title'])
             },
             "embedding": embedding, 
             "chunk_index": int(row['chunk_index']), 

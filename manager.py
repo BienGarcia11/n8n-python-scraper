@@ -1,7 +1,7 @@
 import asyncio
 import pandas as pd
 from dotenv import load_dotenv
-from worker import run_scraper
+from scrapers import FYISupportScraper
 from embedder import generate_embeddings
 from uploader import upload_to_supabase
 from logger_config import setup_logger
@@ -55,12 +55,14 @@ async def main_controller():
     It mimics what the __main__ block did.
     """
     try:
-        output_csv = await run_scraper()
+        # Use the FYI.app specialized scraper
+        scraper = FYISupportScraper()
+        output_csv = await scraper.run()
         
         if output_csv:
             post_processing(csv_file=output_csv)
         else:
-            logger.error("Worker returned no file. Exiting.")
+            logger.error("Scraper returned no file. Exiting.")
             
     except Exception as e:
         logger.exception(f"Controller Error: {e}")
