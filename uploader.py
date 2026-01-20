@@ -4,6 +4,10 @@ import json
 from supabase import Client, create_client
 from dotenv import load_dotenv
 from tqdm import tqdm
+from logger_config import setup_logger
+
+# --- LOGGER SETUP ---
+logger = setup_logger("Uploader")
 
 load_dotenv()
 
@@ -12,39 +16,39 @@ INPUT_FILE = "embedded_data.csv"
 TABLE_NAME = "documents"
 
 def upload_to_supabase(csv_file):
-    print("Uploader: Connecting to Supabase...")
+    logger.info("Connecting to Supabase...")
     
     url = os.getenv("SUPABASE_URL")
     key = os.getenv("SUPABASE_KEY")
     
     if not url or not key:
-        print("Error: SUPABASE_URL or SUPABASE_KEY not found in .env")
+        logger.error("SUPABASE_URL or SUPABASE_KEY not found in .env")
         return
 
     supabase: Client = create_client(url, key)
 
-    print(f"Uploader: Reading {csv_file}...")
+    logger.info(f"Reading {csv_file}...")
     df = pd.read_csv(csv_file)
 
     # Filter successful rows only
     df = df[df['status'] == 'Success'].copy()
 
     # --- STEP 1: GET EXISTING URLS (PREVENT DUPLICATES) ---
-    print("Uploader: Checking for existing URLs...")
+    logger.info("Checking for existing URLs...")
     try:
         # We only fetch the 'url' column to save bandwidth/time
         existing_data = supabase.table(TABLE_NAME).select("url").execute()
         existing_urls = set([item['url'] for item in existing_data.data])
-        print(f"Uploader: Found {len(existing_urls)} existing URLs.")
+        logger.info(f"Found {len(existing_urls)} existing URLs.")
     except Exception as e:
-        print(f"Uploader: Could not check existing URLs (might be first run). {e}")
+        logger.warning(f"Could not check existing URLs (might be first run). {e}")
         existing_urls = set()
 
     # --- STEP 2: PREPARE RECORDS ---
     records_to_upload = []
     skipped_count = 0
 
-    print(f"Uploader: Preparing {len(df)} records for upload...")
+    logger.info(f"Preparing {len(df)} records for upload...")
 
     for _, row in df.iterrows():
         url = str(row['url'])
@@ -57,7 +61,8 @@ def upload_to_supabase(csv_file):
         embedding_str = str(row['embedding'])
         
         # CHECK: Skip invalid embeddings
-        if embedding_str == "None" or not embedding_str.startswith("["):
+        # Pandas might read empty cells as float('nan'), creating "nan" string or actual nan
+        if pd.isna(row['embedding']) or embedding_str in ["None", "nan", ""] or not embedding_str.startswith("["):
             continue
         
         try:
@@ -85,8 +90,8 @@ def upload_to_supabase(csv_file):
         
         records_to_upload.append(record)
 
-    print(f"Uploader: Skipped {skipped_count} duplicates.")
-    print(f"Uploader: Uploading {len(records_to_upload)} NEW records to Supabase...")
+    logger.info(f"Skipped {skipped_count} duplicates.")
+    logger.info(f"Uploading {len(records_to_upload)} NEW records to Supabase...")
     
     # --- STEP 3: UPLOAD ---
     BATCH_SIZE = 100
@@ -98,9 +103,9 @@ def upload_to_supabase(csv_file):
             # If you wanted to Update (overwrite) instead of skip, you'd need logic to find ID.
             response = supabase.table(TABLE_NAME).insert(batch).execute()
         except Exception as e:
-            print(f"\nUploader: Error inserting batch starting at index {i}: {e}")
+            logger.error(f"Error inserting batch starting at index {i}: {e}")
 
-    print("Uploader: Upload Complete.")
+    logger.info("Upload Complete.")
 
 if __name__ == "__main__":
     upload_to_supabase(INPUT_FILE)

@@ -3,6 +3,10 @@ import os
 from openai import OpenAI
 from tqdm import tqdm
 from dotenv import load_dotenv
+from logger_config import setup_logger
+
+# --- LOGGER SETUP ---
+logger = setup_logger("Embedder")
 
 load_dotenv()
 
@@ -54,20 +58,24 @@ def get_embeddings_batch(texts):
         )
         return [item.embedding for item in response.data]
     except Exception as e:
-        print(f"Error generating embedding: {e}")
+        logger.error(f"Error generating embedding: {e}")
         return [None] * len(texts)
 
 def generate_embeddings(input_file, output_file):
-    print(f"Embedder: Reading {input_file}...")
-    df = pd.read_csv(input_file)
+    logger.info(f"Reading {input_file}...")
+    try:
+        df = pd.read_csv(input_file)
+    except FileNotFoundError:
+        logger.error(f"Input file {input_file} not found.")
+        return
 
     df_success = df[df['status'] == 'Success'].copy()
     
     if df_success.empty:
-        print("Embedder: No successful rows to embed.")
+        logger.warning("No successful rows to embed.")
         return
 
-    print(f"Embedder: Processing {len(df_success)} articles...")
+    logger.info(f"Processing {len(df_success)} articles...")
 
     # --- CHUNKING LOGIC ---
     # We expand the dataframe. 1 Article becomes N Rows (Chunks)
@@ -94,7 +102,7 @@ def generate_embeddings(input_file, output_file):
                 "total_chunks": len(chunks)
             })
             
-    print(f"Embedder: Expanded into {len(expanded_rows)} total chunks.")
+    logger.info(f"Expanded into {len(expanded_rows)} total chunks.")
 
     # --- EMBEDDING LOGIC ---
     texts_to_embed = [r['content'] for r in expanded_rows]
@@ -112,9 +120,9 @@ def generate_embeddings(input_file, output_file):
     # Create final DataFrame
     df_final = pd.DataFrame(expanded_rows)
 
-    print(f"Embedder: Saving to {output_file}...")
+    logger.info(f"Saving to {output_file}...")
     df_final.to_csv(output_file, index=False)
-    print("Embedder: Done.")
+    logger.info("Done.")
 
 if __name__ == "__main__":
     generate_embeddings(INPUT_FILE, OUTPUT_FILE)
