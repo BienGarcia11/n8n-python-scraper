@@ -12,3 +12,4 @@ dist/
 build/
 *.log
 failed_urls.txt
+plans/
