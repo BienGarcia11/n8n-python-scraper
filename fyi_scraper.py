@@ -365,7 +365,10 @@ class FYISupportScraper:
             del soup
             soup = None
             
-            chunks = self.chunker.chunk_text(content_text, base_metadata, method=self.chunking_method)
+            title_prefix = f"# {title}\n\n"
+            content_with_title = title_prefix + content_text
+
+            chunks = self.chunker.chunk_text(content_with_title, base_metadata, method=self.chunking_method)
             
             # Clear content_text from memory
             del content_text
