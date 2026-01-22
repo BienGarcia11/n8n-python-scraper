@@ -1,1 +1,0 @@
-VACUUM ANALYZE semantic_cache;
